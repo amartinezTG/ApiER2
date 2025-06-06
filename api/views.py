@@ -99,8 +99,6 @@ def concentrado_anual_view(request):
 
         # Para cada mes: sumo los ingresos definidos y resto los costos definidos
         for mes in MESES:
-            if mes != 'Enero':
-                continue
             
             print(f"  ► Calculando {nombre_margen} para mes {mes}")
 
