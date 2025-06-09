@@ -1,8 +1,16 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from concurrent.futures import ThreadPoolExecutor
-from .conceptos_ingresos import CONCEPTOS_INGRESOS, CONCEPTOS_COSTOVENTA,CONCEPTOS_MARGEN_UTILIDAD
 from django.http import HttpResponse
+from .conceptos_ingresos import (
+    CONCEPTOS_INGRESOS,
+    CONCEPTOS_COSTOVENTA,
+    CONCEPTOS_MARGEN_UTILIDAD,
+    CONCEPTOS_GASTOS_OPERACION,
+    CONCEPTOS_NOMINA,
+    CONCEPTOS_COSTO_SOCIAL,
+    CONCEPTOS_MANTENIMIENTO
+)
 
 import pandas as pd
 import time
@@ -23,9 +31,6 @@ def concentrado_resultados_view(request):
 
     todos = resultadosOG + resultadosCompact
     return Response(todos)
-
-
-
 
 
 @api_view(['POST'])
@@ -99,32 +104,27 @@ def concentrado_anual_view(request):
 
         # Para cada mes: sumo los ingresos definidos y resto los costos definidos
         for mes in MESES:
-            
-            print(f"  ► Calculando {nombre_margen} para mes {mes}")
-
+            if mes != 'Enero':
+                continue
             suma_ing = 0
             for c_ing in definicion['ingresos']:
                 valor_ing = ingresos_por_concepto.get(c_ing, {}).get(mes, 0)
-                print(f"    Ingreso componente {c_ing}: {valor_ing}")
                 suma_ing += valor_ing
-            print(f"    Total ingresos ({nombre_margen}) en {mes}: {suma_ing}")
-
             suma_cost = 0
             for c_cost in definicion['costo_venta']:
                 valor_cost = costos_por_concepto.get(c_cost, {}).get(mes, 0)
-                print(f"    Costo componente {c_cost}: {valor_cost}")
                 suma_cost += valor_cost
-            print(f"    Total costos ({nombre_margen}) en {mes}: {suma_cost}")
 
-            # Asigno el resultado mensual (ingresos – costos)
             margin_dict[mes] = suma_ing - suma_cost
-            print(f"    ⇒ Margen {nombre_margen} en {mes}: {margin_dict[mes]}")
-
-        # Añado este dict a la lista final
-        print(f"Resultado parcial para {nombre_margen}: {margin_dict}")
-
         margen_de_utilidad.append(margin_dict)
     t7 = time.perf_counter()
+
+
+    costo_venta  = agrupar_conceptos_por_mes(df, CONCEPTOS_COSTOVENTA, MESES, 'B - COSTO DE VENTA')
+    gastos_operacion = agrupar_conceptos_por_mes(df,CONCEPTOS_GASTOS_OPERACION,MESES,'E - GASTOS DE OPERACION')
+    nominas = agrupar_conceptos_por_mes(df, CONCEPTOS_NOMINA, MESES, 'C - NOMINA')
+    costo_social = agrupar_conceptos_por_mes(df, CONCEPTOS_COSTO_SOCIAL, MESES, 'D - COSTO SOCIAL')
+    mantenimiento = agrupar_conceptos_por_mes(df, CONCEPTOS_MANTENIMIENTO, MESES, 'F - MANTENIMIENTO')
 
     return Response({
         "numeros_filas": numeros_filas,
@@ -132,6 +132,10 @@ def concentrado_anual_view(request):
         "ingresos": ingresos,
         "costo_venta": costo_venta,
         "margen_de_utilidad": margen_de_utilidad,
+        "gastos_operacion": gastos_operacion,
+        "nominas": nominas,
+        "costo_social": costo_social,
+        "mantenimiento": mantenimiento
         "resultados": todos,
         "timings": {
             "lanzar_threads": t1 - t0,
