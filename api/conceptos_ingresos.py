@@ -1,3 +1,29 @@
+RUBROS_MAPPING = {
+    'ingresos_estaciones':            'A - INGRESOS',
+    'costoventa_estaciones':          'B - COSTO DE VENTA',
+    'gastos_operacion_estaciones':    'E - GASTOS DE OPERACION',
+    'nomina_estaciones':              'C - NOMINA',
+    'costo_social_estaciones':        'D - COSTO SOCIAL',
+    'mantenimiento_estaciones':       'F - MANTENIMIENTO',
+    'gastos_fijos_estaciones':        'H - GASTOS FIJOS',
+}
+RUBROS_STAFF_MAPPING = {
+    'gastos_operacion_staff':    'E - GASTOS DE OPERACION',
+    'nomina_staff':              'C - NOMINA',
+    'costo_social_staff':        'D - COSTO SOCIAL',
+    'mantenimiento_staff':       'F - MANTENIMIENTO',
+    'gastos_fijos_staff':        'H - GASTOS FIJOS',
+}
+
+CONCEPTOS_GASTOS_FIJOS ={
+    'AGUA SERVICIO': ['AGUA SERVICIO'],
+    'ARRENDAMIENTO A PERSONAS FISICAS RESID NAL': ['ARRENDAMIENTO A PERSONAS FISICAS RESID NAL'],
+    'ARRENDAMIENTO EXTRANJEROS': ['ARRENDAMIENTO EXTRANJEROS'],
+    'ARRENDAMIENTO PM RESID NAL': ['ARRENDAMIENTO PM RESID NAL'],
+    'ARRENDAMIENTO VEHICULOS': ['ARRENDAMIENTO VEHICULOS'],
+    'ENERGIA ELECTRICA': ['ENERGIA ELECTRICA'],
+    'TELEFONO, INTERNET': ['TELEFONO, INTERNET']
+}
 CONCEPTOS_MANTENIMIENTO = {
     'ACCESORIOS': ['ACCESORIOS'],
     'ANALISIS DE LA CALIDAD DE COMBUSTIBLE NOM-016-CRE-2016': ['ANALISIS DE LA CALIDAD DE COMBUSTIBLE NOM-016-CRE-2016'],

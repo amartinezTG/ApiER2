@@ -9,16 +9,59 @@ from .conceptos_ingresos import (
     CONCEPTOS_GASTOS_OPERACION,
     CONCEPTOS_NOMINA,
     CONCEPTOS_COSTO_SOCIAL,
-    CONCEPTOS_MANTENIMIENTO
+    CONCEPTOS_MANTENIMIENTO,
+    CONCEPTOS_GASTOS_FIJOS,
+    RUBROS_MAPPING,
+    RUBROS_STAFF_MAPPING
 )
-
 import pandas as pd
 import time
 from io import BytesIO
 
 from .onegoal import concentrado_og
 from .compact import concentrado_compact
+from .controlgas import ControlGas
 
+
+
+@api_view(['POST'])
+def get_er_budget_view(request):
+    meses = [
+        'Enero','Febrero','Marzo','Abril','Mayo','Junio',
+        'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'
+    ]
+    año = int(request.query_params.get('year', 2025))
+    data = ControlGas().get_er_budget(año)
+    df  = pd.DataFrame(data)
+    df_est  = df[df['Categoria'] == 'estaciones']
+    df_staff  = df[df['Categoria'] == 'staff']
+
+    df_rubro = (df_est.groupby('Rubro', as_index=False)[meses].sum())
+    df_rubro_staff = (df_staff.groupby('Rubro', as_index=False)[meses].sum())
+    rubro_estaciones = df_rubro.to_dict(orient='records')
+    rubro_staff = df_rubro_staff.to_dict(orient='records')
+
+    conceptos = {
+        key: (
+            df_est[df_est['Rubro'] == rubro_label]
+            .to_dict(orient='records')
+        )
+        for key, rubro_label in RUBROS_MAPPING.items()
+    }
+    conceptos_staff = {
+        key: (
+            df_staff[df_staff['Rubro'] == rubro_label]
+            .to_dict(orient='records')
+        )
+        for key, rubro_label in RUBROS_STAFF_MAPPING.items()
+    }
+    return Response({
+        'rubro_estaciones': rubro_estaciones,
+        'rubro_staff': rubro_staff,
+        **conceptos,
+        **conceptos_staff,
+        'data': data,
+    })
 
 @api_view(['POST'])
 def concentrado_resultados_view(request):
@@ -40,91 +83,47 @@ def concentrado_anual_view(request):
         'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
     ]
     year = request.data.get('year', 2024)
-    t0 = time.perf_counter()
-    # ----------------------------------------------------------------
-    # 1) Traer datos brutos concurrentemente (concentrado_og + concentrado_compact)
-    # -------------------------------------
+
     with ThreadPoolExecutor() as executor:
         future_og = executor.submit(concentrado_og, year)
         future_compact = executor.submit(concentrado_compact, year)
-        t1 = time.perf_counter()
 
         resultadosOG = future_og.result()
-        t2 = time.perf_counter()
         resultadosCompact = future_compact.result()
-        t3 = time.perf_counter()
 
     todos = resultadosOG + resultadosCompact
     numeros_filas  = len(todos)
-    t4 = time.perf_counter()
-    # ----------------------------------------------------------------
-    # 2) Convertir a DataFrame y normalizar meses a numérico
-    # ----------------------------------------------------------------
+
 
     df = pd.DataFrame(todos)
     for mes in MESES:
         if mes in df.columns:
             df[mes] = pd.to_numeric(df[mes], errors='coerce')
-    # ----------------------------------------------------------------
-    # 3) Normalizar la columna de Concepto
-    # ----------------------------------------------------------------
+
 
     df['Concepto_filtrado'] = df['Concepto'].astype(str).str.strip().str.upper()
-    # ----------------------------------------------------------------
-    # 4) (Opcional) Sumas por Rubro
-    # ----------------------------------------------------------------
+
     sumas_por_rubro_mes = df.groupby('Rubro')[MESES].sum()
     sumas_por_rubro_mes_dict = sumas_por_rubro_mes.to_dict(orient='index')
-    # ----------------------------------------------------------------
-    # 5) Agrupar conceptos para INGRESOS y COSTO_DE_VENTA
-    # ----------------------------------------------------------------
 
-    ingresos = agrupar_conceptos_por_mes(df, CONCEPTOS_INGRESOS, MESES, 'A - INGRESOS')
-    costo_venta  = agrupar_conceptos_por_mes(df, CONCEPTOS_COSTOVENTA, MESES, 'B - COSTO DE VENTA')
-    t5 = time.perf_counter()
-    # ----------------------------------------------------------------
-    # 6) Convierto listas en diccionarios para acceso rápido
-    # ----------------------------------------------------------------
+
+    ingresos = agrupar_conceptos_por_mes(df, CONCEPTOS_INGRESOS, MESES, 'A - INGRESOS', sumas_por_rubro_mes_dict)
+    costo_venta  = agrupar_conceptos_por_mes(df, CONCEPTOS_COSTOVENTA, MESES, 'B - COSTO DE VENTA', sumas_por_rubro_mes_dict)
+
 
     ingresos_por_concepto = { item['concepto']: item for item in ingresos }
     costos_por_concepto   = { item['concepto']: item for item in costo_venta }
-    # ----------------------------------------------------------------
-    # 8) Calcular margen de utilidad y medir su tiempo (t6 y t7)
-    # ----------------------------------------------------------------
-    t6 = time.perf_counter()
-
-    margen_de_utilidad = []
-    for nombre_margen, definicion in CONCEPTOS_MARGEN_UTILIDAD.items():
-        print(f"\n=== Iniciando margen para {nombre_margen} ===")
-        # Empiezo un diccionario con la estructura básica
-        margin_dict = {
-            'concepto': nombre_margen.upper(),
-            'categoria': 'MARGEN DE UTILIDAD'
-        }
-
-        # Para cada mes: sumo los ingresos definidos y resto los costos definidos
-        for mes in MESES:
-            if mes != 'Enero':
-                continue
-            suma_ing = 0
-            for c_ing in definicion['ingresos']:
-                valor_ing = ingresos_por_concepto.get(c_ing, {}).get(mes, 0)
-                suma_ing += valor_ing
-            suma_cost = 0
-            for c_cost in definicion['costo_venta']:
-                valor_cost = costos_por_concepto.get(c_cost, {}).get(mes, 0)
-                suma_cost += valor_cost
-
-            margin_dict[mes] = suma_ing - suma_cost
-        margen_de_utilidad.append(margin_dict)
-    t7 = time.perf_counter()
 
 
-    costo_venta  = agrupar_conceptos_por_mes(df, CONCEPTOS_COSTOVENTA, MESES, 'B - COSTO DE VENTA')
-    gastos_operacion = agrupar_conceptos_por_mes(df,CONCEPTOS_GASTOS_OPERACION,MESES,'E - GASTOS DE OPERACION')
-    nominas = agrupar_conceptos_por_mes(df, CONCEPTOS_NOMINA, MESES, 'C - NOMINA')
-    costo_social = agrupar_conceptos_por_mes(df, CONCEPTOS_COSTO_SOCIAL, MESES, 'D - COSTO SOCIAL')
-    mantenimiento = agrupar_conceptos_por_mes(df, CONCEPTOS_MANTENIMIENTO, MESES, 'F - MANTENIMIENTO')
+    margen_de_utilidad = calcular_margen_utilidad(ingresos_por_concepto,costos_por_concepto,CONCEPTOS_MARGEN_UTILIDAD,MESES)
+
+
+    costo_venta  = agrupar_conceptos_por_mes(df, CONCEPTOS_COSTOVENTA, MESES, 'B - COSTO DE VENTA', sumas_por_rubro_mes_dict)
+    gastos_operacion = agrupar_conceptos_por_mes(df,CONCEPTOS_GASTOS_OPERACION,MESES,'E - GASTOS DE OPERACION', sumas_por_rubro_mes_dict)
+    nominas = agrupar_conceptos_por_mes(df, CONCEPTOS_NOMINA, MESES, 'C - NOMINA', sumas_por_rubro_mes_dict)
+    costo_social = agrupar_conceptos_por_mes(df, CONCEPTOS_COSTO_SOCIAL, MESES, 'D - COSTO SOCIAL', sumas_por_rubro_mes_dict)
+    mantenimiento = agrupar_conceptos_por_mes(df, CONCEPTOS_MANTENIMIENTO, MESES, 'F - MANTENIMIENTO', sumas_por_rubro_mes_dict)
+    gastos_fijos = agrupar_conceptos_por_mes(df, CONCEPTOS_GASTOS_FIJOS, MESES, 'H - GASTOS FIJOS', sumas_por_rubro_mes_dict)
 
     return Response({
         "numeros_filas": numeros_filas,
@@ -135,21 +134,14 @@ def concentrado_anual_view(request):
         "gastos_operacion": gastos_operacion,
         "nominas": nominas,
         "costo_social": costo_social,
-        "mantenimiento": mantenimiento
+        "mantenimiento": mantenimiento,
+        "gastos_fijos": gastos_fijos,
         "resultados": todos,
-        "timings": {
-            "lanzar_threads": t1 - t0,
-            "concentrado_og": t2 - t1,
-            "concentrado_compact": t3 - t2,
-            "juntar_resultados": t4 - t3,
-            "procesamiento_pandas": t5 - t4,
-            "calculo_margen": t7 - t6,
-            "total": t7 - t0
-        }
+
     })
 
 
-def agrupar_conceptos_por_mes(df, conceptos_dict, meses, rubro):
+def agrupar_conceptos_por_mes(df, conceptos_dict, meses, rubro, sumas_por_rubro_mes):
     resultados = []
     for nombre, conceptos in conceptos_dict.items():
         conceptos_normalizados = [c.upper().strip() for c in conceptos]
@@ -157,14 +149,43 @@ def agrupar_conceptos_por_mes(df, conceptos_dict, meses, rubro):
             (df['Rubro'] == rubro) &
             (df['Concepto_filtrado'].isin(conceptos_normalizados))
         ]
-        suma_por_mes = filtro[meses].sum().to_dict()
-        resultados.append({
+        suma_por_mes = filtro[meses].sum()
+        fila = {
             'concepto': nombre.upper(),
-            'categoria': rubro,
-            **suma_por_mes
-        })
+            'categoria': rubro
+        }
+        for mes in meses:
+            total = suma_por_mes.get(mes, 0)
+            total_rubro = sumas_por_rubro_mes.get(rubro, {}).get(mes, 0)
+            porcentaje = (total / total_rubro * 100) if total_rubro else 0
+            fila[mes] = {
+                'total': round(total, 2),
+                'porcentaje': f"{porcentaje:.2f}%"
+            }
+        resultados.append(fila)
     return resultados
 
+def calcular_margen_utilidad(ingresos_por_concepto, costos_por_concepto, definiciones_margen, meses):
+    resultado = []
+    for nombre_margen, definicion in definiciones_margen.items():
+        margin_dict = {
+            'concepto': nombre_margen.upper(),
+            'categoria': 'MARGEN DE UTILIDAD'
+        }
+
+        for mes in meses:
+            suma_ing = sum(
+                ingresos_por_concepto.get(c_ing, {}).get(mes, {}).get('total', 0)
+                for c_ing in definicion.get('ingresos', [])
+            )
+            suma_cost = sum(
+                costos_por_concepto.get(c_cost, {}).get(mes, {}).get('total', 0)
+                for c_cost in definicion.get('costo_venta', [])
+            )
+            utilidad = round(suma_ing - suma_cost, 2)
+            margin_dict[mes] = utilidad
+        resultado.append(margin_dict)
+    return resultado
 
 @api_view(['GET', 'POST'])
 def exportar_ingresos_excel(request):
