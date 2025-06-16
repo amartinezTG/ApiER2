@@ -26,26 +26,26 @@ class Compact:
         if base == 'ctSERVICIO_SYC_SA_DE_CV':
             CatCentroCosto = """
                 case 
-                    when t3.id in (8,5) then 'Staff'
-                    when t3.id = 12 then 'estaciones'
+                    when t3.id in (8,5) then 'STAFF'
+                    when t3.id = 12 then 'ESTACIONES'
                     ELSE 'n/a'
                 END AS [CatCentroCosto],
             """
         elif base == 'ctSERVICIOS_GASOLINEROS_EL_CASTANO_SA':
             CatCentroCosto = """
                 case 
-                    when t3.id in (8,5,13,16) then 'Staff'
-                    when t3.id in (33,1,65) then 'estaciones'
-                    when t3.id = 6 then 'Corporativo'
+                    when t3.id in (8,5,13,16) then 'STAFF'
+                    when t3.id in (33,1,65) then 'ESTACIONES'
+                    when t3.id = 6 then 'CORPORATIVO'
                     ELSE 'n/a'
                 END AS [CatCentroCosto],
             """
         elif base == 'ctGASOLINERA_VILLA_AHUMADA':
             CatCentroCosto = """
                 case 
-                    when t3.id in (9,13) then 'Staff'
-                    when t3.id in (5,17) then 'estaciones'
-                    when t3.id = 21 then 'Corporativo'
+                    when t3.id in (9,13) then 'STAFF'
+                    when t3.id in (5,17) then 'ESTACIONES'
+                    when t3.id = 21 then 'CORPORATIVO''
                     ELSE 'n/a'
                 END AS [CatCentroCosto],
             """
@@ -123,9 +123,9 @@ class Compact:
 def concentrado_compact(year):
     compact = Compact()
     bases = [
-        ('ctSERVICIO_SYC_SA_DE_CV', "'SERVICIO SYC S.A. DE C.V.' As Empresa, t3.Nombre as [CentroCosto], case when t3.id in (8,5) then 'Staff' when t3.id = 12 then 'estaciones' ELSE 'n/a' END AS [CatCentroCosto],"),
-        ('ctSERVICIOS_GASOLINEROS_EL_CASTANO_SA', "'SERVICIOS GASOLINEROS EL CASTAÑO S.A.' As Empresa, t3.Nombre as [CentroCosto], case when t3.id in (8,5,13,16) then 'Staff' when t3.id in (33,1,65) then 'estaciones' when t3.id = 6 then 'Corporativo' ELSE 'n/a' END AS [CatCentroCosto],"),
-        ('ctGASOLINERA_VILLA_AHUMADA', "'GASOLINERA VILLA AHUMADA' As Empresa, t3.Nombre as [CentroCosto], case when t3.id in (9,13) then 'Staff' when t3.id in (5,17) then 'estaciones' when t3.id = 21 then 'Corporativo' ELSE 'n/a' END AS [CatCentroCosto],")
+        ('ctSERVICIO_SYC_SA_DE_CV', "'SERVICIO SYC S.A. DE C.V.' As Empresa, t3.Nombre as [CentroCosto], case when t3.id in (8,5) then 'STAFF' when t3.id = 12 then 'ESTACIONES' ELSE 'n/a' END AS [CatCentroCosto],"),
+        ('ctSERVICIOS_GASOLINEROS_EL_CASTANO_SA', "'SERVICIOS GASOLINEROS EL CASTAÑO S.A.' As Empresa, t3.Nombre as [CentroCosto], case when t3.id in (8,5,13,16) then 'STAFF' when t3.id in (33,1,65) then 'ESTACIONES' when t3.id = 6 then 'Corporativo' ELSE 'n/a' END AS [CatCentroCosto],"),
+        ('ctGASOLINERA_VILLA_AHUMADA', "'GASOLINERA VILLA AHUMADA' As Empresa, t3.Nombre as [CentroCosto], case when t3.id in (9,13) then 'STAFF' when t3.id in (5,17) then 'ESTACIONES' when t3.id = 21 then 'Corporativo' ELSE 'n/a' END AS [CatCentroCosto],")
     ]
 
     queries = []

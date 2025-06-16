@@ -16,8 +16,9 @@ from .conceptos_ingresos import (
 )
 import pandas as pd
 import time
+import math
 from io import BytesIO
-
+import numpy as np
 from .onegoal import concentrado_og
 from .compact import concentrado_compact
 from .controlgas import ControlGas
@@ -82,7 +83,9 @@ def concentrado_anual_view(request):
         'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
         'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
     ]
-    year = request.data.get('year', 2024)
+    year = request.data.get('year')
+    if not year:
+        return Response({"error": "El año es requerido"}, status=400)
 
     with ThreadPoolExecutor() as executor:
         future_og = executor.submit(concentrado_og, year)
@@ -100,46 +103,97 @@ def concentrado_anual_view(request):
         if mes in df.columns:
             df[mes] = pd.to_numeric(df[mes], errors='coerce')
 
-
     df['Concepto_filtrado'] = df['Concepto'].astype(str).str.strip().str.upper()
+    # sumas_por_rubro_mes = df.groupby('Rubro')[MESES].sum()
 
-    sumas_por_rubro_mes = df.groupby('Rubro')[MESES].sum()
-    sumas_por_rubro_mes_dict = sumas_por_rubro_mes.to_dict(orient='index')
+    sumas_por_rubro_cat_mes = df.groupby(['Rubro', 'CatCentroCosto'])[MESES].sum()
+    sumas_por_rubro_cat_mes_dict = {}
+    for (rubro, cat_centro_costo), row in sumas_por_rubro_cat_mes.iterrows():
+        if rubro not in sumas_por_rubro_cat_mes_dict:
+            sumas_por_rubro_cat_mes_dict[rubro] = {}
+        sumas_por_rubro_cat_mes_dict[rubro][cat_centro_costo] = row.to_dict()
+
+    # sumas_por_rubro_mes_dict = sumas_por_rubro_mes.to_dict(orient='index')
+    # sumas_por_rubro_mes_dict = limpiar_nans_dict(sumas_por_rubro_mes_dict)
+    print(f"Sumas por rubro y mes: {sumas_por_rubro_cat_mes_dict}")
+
+    # seccion para calcular porcentajes
+    # suma_ingresos = sumas_por_rubro_mes.loc['A - INGRESOS']
+    # suma_ingresos = suma_ingresos.replace(0, np.nan)
+    # porcentajes_vs_ingresos = sumas_por_rubro_mes.div(suma_ingresos) * 100
+    # porcentajes_vs_ingresos = porcentajes_vs_ingresos.replace([np.inf, -np.inf, np.nan], 0.0).round(2)
+    # porcentajes_vs_ingresos_dict = porcentajes_vs_ingresos.to_dict(orient='index')
+    # porcentajes_vs_ingresos_dict = limpiar_nans_dict(porcentajes_vs_ingresos_dict)
 
 
-    ingresos = agrupar_conceptos_por_mes(df, CONCEPTOS_INGRESOS, MESES, 'A - INGRESOS', sumas_por_rubro_mes_dict)
-    costo_venta  = agrupar_conceptos_por_mes(df, CONCEPTOS_COSTOVENTA, MESES, 'B - COSTO DE VENTA', sumas_por_rubro_mes_dict)
+    # ingresos = agrupar_conceptos_por_mes(df, CONCEPTOS_INGRESOS, MESES, 'A - INGRESOS', sumas_por_rubro_mes_dict)
+    # costo_venta  = agrupar_conceptos_por_mes(df, CONCEPTOS_COSTOVENTA, MESES, 'B - COSTO DE VENTA', sumas_por_rubro_mes_dict)
 
 
-    ingresos_por_concepto = { item['concepto']: item for item in ingresos }
-    costos_por_concepto   = { item['concepto']: item for item in costo_venta }
+    # ingresos_por_concepto = { item['concepto']: item for item in ingresos }
+    # costos_por_concepto   = { item['concepto']: item for item in costo_venta }
 
 
-    margen_de_utilidad = calcular_margen_utilidad(ingresos_por_concepto,costos_por_concepto,CONCEPTOS_MARGEN_UTILIDAD,MESES)
+    # margen_de_utilidad = calcular_margen_utilidad(ingresos_por_concepto,costos_por_concepto,CONCEPTOS_MARGEN_UTILIDAD,MESES,sumas_por_rubro_mes_dict)
 
+    # gastos_operacion = agrupar_conceptos_por_mes(df,CONCEPTOS_GASTOS_OPERACION,MESES,'E - GASTOS DE OPERACION', sumas_por_rubro_mes_dict)
+    # nominas = agrupar_conceptos_por_mes(df, CONCEPTOS_NOMINA, MESES, 'C - NOMINA', sumas_por_rubro_mes_dict)
+    # costo_social = agrupar_conceptos_por_mes(df, CONCEPTOS_COSTO_SOCIAL, MESES, 'D - COSTO SOCIAL', sumas_por_rubro_mes_dict)
+    # mantenimiento = agrupar_conceptos_por_mes(df, CONCEPTOS_MANTENIMIENTO, MESES, 'F - MANTENIMIENTO', sumas_por_rubro_mes_dict)
+    # gastos_fijos = agrupar_conceptos_por_mes(df, CONCEPTOS_GASTOS_FIJOS, MESES, 'H - GASTOS FIJOS', sumas_por_rubro_mes_dict)
 
-    costo_venta  = agrupar_conceptos_por_mes(df, CONCEPTOS_COSTOVENTA, MESES, 'B - COSTO DE VENTA', sumas_por_rubro_mes_dict)
-    gastos_operacion = agrupar_conceptos_por_mes(df,CONCEPTOS_GASTOS_OPERACION,MESES,'E - GASTOS DE OPERACION', sumas_por_rubro_mes_dict)
-    nominas = agrupar_conceptos_por_mes(df, CONCEPTOS_NOMINA, MESES, 'C - NOMINA', sumas_por_rubro_mes_dict)
-    costo_social = agrupar_conceptos_por_mes(df, CONCEPTOS_COSTO_SOCIAL, MESES, 'D - COSTO SOCIAL', sumas_por_rubro_mes_dict)
-    mantenimiento = agrupar_conceptos_por_mes(df, CONCEPTOS_MANTENIMIENTO, MESES, 'F - MANTENIMIENTO', sumas_por_rubro_mes_dict)
-    gastos_fijos = agrupar_conceptos_por_mes(df, CONCEPTOS_GASTOS_FIJOS, MESES, 'H - GASTOS FIJOS', sumas_por_rubro_mes_dict)
+    # budget = get_budget_view(year, MESES)
 
     return Response({
         "numeros_filas": numeros_filas,
-        "sumas_por_rubro_mes": sumas_por_rubro_mes_dict,
-        "ingresos": ingresos,
-        "costo_venta": costo_venta,
-        "margen_de_utilidad": margen_de_utilidad,
-        "gastos_operacion": gastos_operacion,
-        "nominas": nominas,
-        "costo_social": costo_social,
-        "mantenimiento": mantenimiento,
-        "gastos_fijos": gastos_fijos,
+        "sumas_por_rubro_mes": sumas_por_rubro_cat_mes_dict,
         "resultados": todos,
+
+        # "budget": budget,
+        # "porcentajes_vs_ingresos": porcentajes_vs_ingresos_dict,
+        # "ingresos": ingresos,
+        # "costo_venta": costo_venta,
+        # "margen_de_utilidad": margen_de_utilidad,
+        # "gastos_operacion": gastos_operacion,
+        # "nominas": nominas,
+        # "costo_social": costo_social,
+        # "mantenimiento": mantenimiento,
+        # "gastos_fijos": gastos_fijos,
 
     })
 
+def get_budget_view(year, meses):
+    data = ControlGas().get_er_budget(year)
+    df  = pd.DataFrame(data)
+    df_est  = df[df['Categoria'] == 'estaciones']
+    df_staff  = df[df['Categoria'] == 'staff']
+
+    df_rubro = (df_est.groupby('Rubro', as_index=False)[meses].sum())
+    df_rubro_staff = (df_staff.groupby('Rubro', as_index=False)[meses].sum())
+    rubro_estaciones = df_rubro.to_dict(orient='records')
+    rubro_staff = df_rubro_staff.to_dict(orient='records')
+
+    conceptos = {
+        key: (
+            df_est[df_est['Rubro'] == rubro_label]
+            .to_dict(orient='records')
+        )
+        for key, rubro_label in RUBROS_MAPPING.items()
+    }
+    conceptos_staff = {
+        key: (
+            df_staff[df_staff['Rubro'] == rubro_label]
+            .to_dict(orient='records')
+        )
+        for key, rubro_label in RUBROS_STAFF_MAPPING.items()
+    }
+    return {
+        'rubro_estaciones': rubro_estaciones,
+        'rubro_staff': rubro_staff,
+        **conceptos,
+        **conceptos_staff,
+        'data': data,
+    }
 
 def agrupar_conceptos_por_mes(df, conceptos_dict, meses, rubro, sumas_por_rubro_mes):
     resultados = []
@@ -147,7 +201,8 @@ def agrupar_conceptos_por_mes(df, conceptos_dict, meses, rubro, sumas_por_rubro_
         conceptos_normalizados = [c.upper().strip() for c in conceptos]
         filtro = df[
             (df['Rubro'] == rubro) &
-            (df['Concepto_filtrado'].isin(conceptos_normalizados))
+            (df['Concepto_filtrado'].isin(conceptos_normalizados)) &
+            ((df['CatCentroCosto'] == 'estaciones') | (df['CatCentroCosto'] == 'ESTACIONES'))
         ]
         suma_por_mes = filtro[meses].sum()
         fila = {
@@ -165,7 +220,7 @@ def agrupar_conceptos_por_mes(df, conceptos_dict, meses, rubro, sumas_por_rubro_
         resultados.append(fila)
     return resultados
 
-def calcular_margen_utilidad(ingresos_por_concepto, costos_por_concepto, definiciones_margen, meses):
+def calcular_margen_utilidad(ingresos_por_concepto, costos_por_concepto, definiciones_margen, meses, sumas_por_rubro_mes):
     resultado = []
     for nombre_margen, definicion in definiciones_margen.items():
         margin_dict = {
@@ -182,11 +237,25 @@ def calcular_margen_utilidad(ingresos_por_concepto, costos_por_concepto, definic
                 costos_por_concepto.get(c_cost, {}).get(mes, {}).get('total', 0)
                 for c_cost in definicion.get('costo_venta', [])
             )
-            utilidad = round(suma_ing - suma_cost, 2)
-            margin_dict[mes] = utilidad
+            utilidad = round(suma_ing + suma_cost, 2)
+            total_ingreso = sumas_por_rubro_mes.get('A - INGRESOS', {}).get(mes, 0)
+            porcentaje_utilidad = (utilidad / total_ingreso * 100) if total_ingreso else 0
+            # print(f"Procesando {nombre_margen} para el mes {mes}:")
+            # print(f"Suma Ingresos: {suma_ing}, Suma Costo: {suma_cost}, Utilidad: {utilidad}")
+            # print(f"Mes: {mes}, total_ingreso: {total_ingreso}, Utilidad: {utilidad}, Porcentaje: {porcentaje_utilidad:.2f}%")
+            margin_dict[mes] = {
+                'total': utilidad,
+                'porcentaje': f"{porcentaje_utilidad:.2f}%"
+            }
+            break
         resultado.append(margin_dict)
     return resultado
-
+def limpiar_nans_dict(d):
+    for k1, v1 in d.items():
+        for k2, v2 in v1.items():
+            if isinstance(v2, float) and math.isnan(v2):
+                d[k1][k2] = 0.0
+    return d
 @api_view(['GET', 'POST'])
 def exportar_ingresos_excel(request):
     MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',

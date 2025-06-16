@@ -6,6 +6,7 @@ RUBROS_MAPPING = {
     'costo_social_estaciones':        'D - COSTO SOCIAL',
     'mantenimiento_estaciones':       'F - MANTENIMIENTO',
     'gastos_fijos_estaciones':        'H - GASTOS FIJOS',
+    'margen_estaciones':              'MARGEN DE UTILIDAD',
 }
 RUBROS_STAFF_MAPPING = {
     'gastos_operacion_staff':    'E - GASTOS DE OPERACION',

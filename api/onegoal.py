@@ -20,7 +20,7 @@ class OneGoal:
         query = f"""
             SELECT '{nombre}' As Empresa,
                 [Nom Cen Cto] as CentroCosto,
-                [Cat Cen Cto] as CatCentroCosto,
+                UPPER([Cat Cen Cto]) as CatCentroCosto,
                 [num cta] as NoCuenta,
                 categoria as Rubro,
                 CASE WHEN [1g_vs_paq].nom_cta_paq IS NULL THEN [nom cta] ELSE [1g_vs_paq].nom_cta_paq END AS Concepto,
@@ -42,6 +42,7 @@ class OneGoal:
             WHERE monto <> 0 AND [año] = ?
             GROUP BY año, categoria, [num cta], [1g_vs_paq].nom_cta_paq, [nom cta], [Cen Cto], [Nom Cen Cto], [Cat Cen Cto]
         """
+        
         try:
             rows = self.cursor.execute(query, anio).fetchall()
             cols = [column[0] for column in self.cursor.description]
@@ -69,7 +70,7 @@ def concentrado_og(year):
             SELECT 
                 '{nombre_visible}' AS Empresa,
                 t.[Nom Cen Cto] AS CentroCosto,
-                t.[Cat Cen Cto] AS CatCentroCosto,
+                UPPER(t.[Cat Cen Cto]) AS CatCentroCosto,
                 t.[num cta] COLLATE Modern_Spanish_CI_AS AS NoCuenta,
                 t.categoria AS Rubro,
                 CASE 
@@ -150,7 +151,7 @@ def concentrado_og(year):
         for r in resultados:
             if r.get('CentroCosto') == 'ES MUNICIPIO LIBRE':
                 r['CentroCosto'] = 'MUNICIPIO LIBRE'
-                r['CatCentroCosto'] = 'estaciones'
+                r['CatCentroCosto'] = 'ESTACIONES'
 
 
         return resultados
