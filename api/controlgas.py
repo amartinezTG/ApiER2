@@ -23,7 +23,7 @@ class ControlGas:
             )
             SELECT
             Rubro,
-            Concepto,
+              UPPER(Concepto)  AS Concepto,
             Categoria,
             ISNULL([1],0)  AS Enero,
             ISNULL([2],0)  AS Febrero,

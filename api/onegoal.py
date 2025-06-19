@@ -63,7 +63,6 @@ def concentrado_og(year):
 
     queries = []
     params = []
-
     for base in NOMBRE_EMPRESA_MAP.keys():
         nombre_visible = NOMBRE_EMPRESA_MAP[base]
         queries.append(f"""
@@ -74,9 +73,17 @@ def concentrado_og(year):
                 t.[num cta] COLLATE Modern_Spanish_CI_AS AS NoCuenta,
                 t.categoria AS Rubro,
                 CASE 
-                    WHEN [1g_vs_paq].nom_cta_paq IS NULL THEN t.[nom cta] COLLATE Traditional_Spanish_CI_AS
-                    ELSE [1g_vs_paq].nom_cta_paq
-                END AS Concepto,
+                WHEN [1g_vs_paq].nom_cta_paq IS NULL THEN
+                    TRANSLATE(UPPER(t.[nom cta] COLLATE Traditional_Spanish_CI_AS),
+                        'ÁÉÍÓÚÀÈÌÒÙÂÊÎÔÛÄËÏÖÜÃÕÇ',
+                        'AEIOUAEIOUAEIOUAEIOUAOC'
+                    )
+                ELSE
+                    TRANSLATE(UPPER([1g_vs_paq].nom_cta_paq),
+                        'ÁÉÍÓÚÀÈÌÒÙÂÊÎÔÛÄËÏÖÜÃÕÇ',
+                        'AEIOUAEIOUAEIOUAEIOUAOC'
+                    )
+            END AS Concepto,
                 SUM(CASE WHEN t.mes = 1 THEN t.monto * -1 ELSE 0 END) AS Enero,
                 SUM(CASE WHEN t.mes = 2 THEN t.monto * -1 ELSE 0 END) AS Febrero,
                 SUM(CASE WHEN t.mes = 3 THEN t.monto * -1 ELSE 0 END) AS Marzo,
@@ -159,4 +166,14 @@ def concentrado_og(year):
         print(f"Error: {e}")
         return []
 
+
+# def is_og_available():
+#     try:
+#         onegoal = OneGoal()
+#         cursor = onegoal.conn.cursor()
+#         cursor.execute("SELECT 1")
+#         return True
+#     except Exception as e:
+#         print(f"OG no disponible: {e}")
+#         return False
 

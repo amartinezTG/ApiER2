@@ -146,7 +146,10 @@ def concentrado_compact(year):
                     WHEN t2.DigAgrup = 11 THEN 'K - CIF'
                     ELSE 'Otros'
                 END AS Rubro,
-                UPPER(t2.Nombre) AS [Concepto],
+                TRANSLATE(UPPER(t2.Nombre),
+                    'ÁÉÍÓÚÀÈÌÒÙÂÊÎÔÛÄËÏÖÜÃÕÇ',
+                    'AEIOUAEIOUAEIOUAEIOUAOC'
+                ) AS [Concepto],
                 CASE WHEN t2.Tipo = 'H' THEN (t1.Importe1  - t1.SaldoIni) ELSE -(t1.Importe1  - t1.SaldoIni) END AS Enero,
                 CASE WHEN t2.Tipo = 'H' THEN (t1.Importe2  - t1.Importe1) ELSE -(t1.Importe2  - t1.Importe1) END AS Febrero,
                 CASE WHEN t2.Tipo = 'H' THEN (t1.Importe3  - t1.Importe2) ELSE -(t1.Importe3  - t1.Importe2) END AS Marzo,
