@@ -87,30 +87,42 @@ def concentrado_anual_view(request):
     if not year:
         return Response({"error": "El año es requerido"}, status=400)
 
-    resultados = obtener_resultados_anuales(year)
-    numeros_filas  = len(resultados)
+    # resultados =  obtener_resultados_anuales(year)
+    year = int(request.data.get('year'))
+
+    last_year = year - 1
+    # resultados_last_year = obtener_resultados_anuales(last_year)
+
+    with ThreadPoolExecutor() as executor:
+        future_current = executor.submit(obtener_resultados_anuales, year)
+        future_last = executor.submit(obtener_resultados_anuales, last_year)
+
+        resultados = future_current.result()
+        resultados_last_year = future_last.result()
+
+
     df = pd.DataFrame(resultados)
     ensure_numeric(df, MESES)
     df['Concepto_filtrado'] = df['Concepto'].astype(str).str.strip().str.upper()
 
-
-
     sumas_por_rubro_cat_mes = agrupar_rubro_categoria(df, MESES)
+
     porcentajes_vs_ingresos = porcentajes_vs_ingresos_cat(sumas_por_rubro_cat_mes, MESES, 'ESTACIONES')
     porcentajes_vs_ingresos_staff = porcentajes_vs_ingresos_cat(sumas_por_rubro_cat_mes, MESES, 'STAFF')
 
-
-    
     secciones_estaciones = obtener_secciones(df, sumas_por_rubro_cat_mes, MESES, 'ESTACIONES')
     secciones_staff = obtener_secciones(df, sumas_por_rubro_cat_mes, MESES, 'STAFF')
 
-
-
     budget = get_budget_view(year, MESES)
 
+    df= pd.DataFrame(resultados_last_year)
+    ensure_numeric(df, MESES)
+    df['Concepto_filtrado'] = df['Concepto'].astype(str).str.strip().str.upper()
+    sumas_por_rubro_cat_mes_last_year = agrupar_rubro_categoria(df, MESES)
+
     return Response({
-        "numeros_filas": numeros_filas,
         "sumas_por_rubro_mes": sumas_por_rubro_cat_mes,
+        "sumas_por_rubro_mes_last_year": sumas_por_rubro_cat_mes_last_year,
         "resultados": resultados,
         "budget": budget,
         "porcentajes_vs_ingresos": porcentajes_vs_ingresos,
