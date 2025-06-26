@@ -22,6 +22,10 @@ import numpy as np
 from .onegoal import concentrado_og
 from .compact import concentrado_compact
 from .controlgas import ControlGas
+from api.modelos.ERpetrotal import Erpetrotal
+import datetime
+import calendar
+
 
 
 
@@ -100,20 +104,26 @@ def concentrado_anual_view(request):
         resultados = future_current.result()
         resultados_last_year = future_last.result()
 
-
     df = pd.DataFrame(resultados)
     ensure_numeric(df, MESES)
     df['Concepto_filtrado'] = df['Concepto'].astype(str).str.strip().str.upper()
 
     sumas_por_rubro_cat_mes = agrupar_rubro_categoria(df, MESES)
 
-    porcentajes_vs_ingresos = porcentajes_vs_ingresos_cat(sumas_por_rubro_cat_mes, MESES, 'ESTACIONES')
-    porcentajes_vs_ingresos_staff = porcentajes_vs_ingresos_cat(sumas_por_rubro_cat_mes, MESES, 'STAFF')
 
-    secciones_estaciones = obtener_secciones(df, sumas_por_rubro_cat_mes, MESES, 'ESTACIONES')
-    secciones_staff = obtener_secciones(df, sumas_por_rubro_cat_mes, MESES, 'STAFF')
+    with ThreadPoolExecutor() as executor:
+        f1 = executor.submit(porcentajes_vs_ingresos_cat, sumas_por_rubro_cat_mes, MESES, 'ESTACIONES')
+        f2 = executor.submit(porcentajes_vs_ingresos_cat, sumas_por_rubro_cat_mes, MESES, 'STAFF')
+        f3 = executor.submit(obtener_secciones, df, sumas_por_rubro_cat_mes, MESES, 'ESTACIONES')
+        f4 = executor.submit(obtener_secciones, df, sumas_por_rubro_cat_mes, MESES, 'STAFF')
+        f5 = executor.submit(get_budget_view, year, MESES)
 
-    budget = get_budget_view(year, MESES)
+        porcentajes_vs_ingresos = f1.result()
+        porcentajes_vs_ingresos_staff = f2.result()
+        secciones_estaciones = f3.result()
+        secciones_staff = f4.result()
+        budget = f5.result()
+
 
     df= pd.DataFrame(resultados_last_year)
     ensure_numeric(df, MESES)
@@ -361,3 +371,30 @@ def exportar_ingresos_excel(request):
             {"error": f"Error al generar el archivo Excel: {str(e)}"}, 
             status=500
         )
+    
+@api_view(['GET', 'POST'])
+def er_petrotal(request):
+    """
+    Endpoint para obtener el presupuesto de ER Petrotal.
+    """
+    try:
+        date = request.data.get('date') if request.method == 'POST' else request.query_params.get('date')
+        if not date:
+            return Response({"error": "La fecha es requerida"}, status=400)
+        modelo = Erpetrotal()
+
+        date_obj = datetime.datetime.strptime(date, '%Y-%m-%d')
+        ultimo_dia = calendar.monthrange(date_obj.year, date_obj.month)[1]
+        fecha_ultimo_dia = datetime.date(date_obj.year, date_obj.month, ultimo_dia)
+        print(fecha_ultimo_dia)  # Resultado: 2025-04-30
+
+
+        data = modelo.utilidad_petrotal_estacion(date,fecha_ultimo_dia)
+
+        if not data:
+            return Response({"error": "No se encontraron datos para la fecha especificada"}, status=404)
+
+        return Response(data)
+    
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
