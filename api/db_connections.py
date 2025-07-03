@@ -23,3 +23,11 @@ CONTROLGAS_CONN_STR = (
     "PWD=sahei1712;"
     "TrustServerCertificate=yes;"
 )
+CONTROLGASTG_CONN_STR = (
+    "DRIVER={ODBC Driver 17 for SQL Server};"
+    "SERVER=192.168.0.6,1433;"
+    "DATABASE=TG;"
+    "UID=cguser;"
+    "PWD=sahei1712;"
+    "TrustServerCertificate=yes;"
+)

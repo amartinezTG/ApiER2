@@ -371,6 +371,25 @@ def exportar_ingresos_excel(request):
             {"error": f"Error al generar el archivo Excel: {str(e)}"}, 
             status=500
         )
+
+@api_view(['GET', 'POST'])
+def er_petrotal_concept(request):
+    """
+    Endpoint para obtener el presupuesto de ER Petrotal por concepto.
+    """
+    try:
+        date = request.data.get('date') if request.method == 'POST' else request.query_params.get('date')
+        if not date:
+            return Response({"error": "La fecha es requerida"}, status=400)
+        modelo = Erpetrotal()
+        data = modelo.er_petrotal_concept(date)
+        if not data:
+            return Response({"error": "No se encontraron datos para la fecha especificada"}, status=404)
+
+        return Response(data)
+    
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
     
 @api_view(['GET', 'POST'])
 def er_petrotal(request):

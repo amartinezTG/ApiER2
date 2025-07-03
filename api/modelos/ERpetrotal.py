@@ -89,5 +89,27 @@ class Erpetrotal:
             # podrías usar logging en lugar de print
             print(f"ControlGas DB error: {e}")
             return []
-        
+    
+    def er_petrotal_concept(self, date):
+        sql = """
+        SELECT TOP (1000) [id]
+            ,[rubro]
+            ,[cuenta]
+            ,isnull([valor],0) as valor
+            ,[fecha]
+            ,[fecha_creacion]
+        FROM [TGV2].[dbo].[ERPetrotal]
+        where fecha = ?
+        """
+        try:
+            with pyodbc.connect(self.conn_str) as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql,date)
+                cols = [col[0] for col in cursor.description]
+                rows = cursor.fetchall()
+            return [dict(zip(cols, row)) for row in rows]
+        except pyodbc.Error as e:
+            # podrías usar logging en lugar de print
+            print(f"ControlGas DB error: {e}")
+            return []
 
