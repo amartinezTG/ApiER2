@@ -8,9 +8,11 @@ from .views import (
     er_petrotal,
     er_petrotal_concept
 )
-from .TG_php.views import estacion_porcentaje
-
-
+from .TG_php.views import (
+    estacion_porcentaje,
+    porcent_estacion_facturados_info,
+    porcent_facturas_info
+)
 
 
 urlpatterns = [
@@ -23,5 +25,7 @@ urlpatterns = [
     path('er_petrotal_concept/', er_petrotal_concept),
     # Rutas para TG_php
     path('estacion_porcentaje/', estacion_porcentaje),
+    path('porcent_estacion_facturados_info/', porcent_estacion_facturados_info),
+    path('porcent_facturas_info/', porcent_facturas_info),
 
 ]
