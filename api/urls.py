@@ -6,7 +6,8 @@ from .views import (
     exportar_ingresos_excel,
     get_er_budget_view,
     er_petrotal,
-    er_petrotal_concept
+    er_petrotal_concept,
+    gasto_petrotal
 )
 from .TG_php.views import (
     estacion_porcentaje,
@@ -27,5 +28,6 @@ urlpatterns = [
     path('estacion_porcentaje/', estacion_porcentaje),
     path('porcent_estacion_facturados_info/', porcent_estacion_facturados_info),
     path('porcent_facturas_info/', porcent_facturas_info),
+    path('gasto_petrotal/', gasto_petrotal),
 
 ]

@@ -44,7 +44,7 @@ class OneGoal:
         """
         
         try:
-            rows = self.cursor.execute(query, anio).fetchall()
+            rows = self.cursor.execute(query, anio).fetchall() 
             cols = [column[0] for column in self.cursor.description]
             return [dict(zip(cols, row)) for row in rows]
         except Exception as e:

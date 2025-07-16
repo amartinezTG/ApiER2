@@ -26,6 +26,8 @@ from api.modelos.ERpetrotal import Erpetrotal
 import datetime
 import calendar
 
+modeloER = Erpetrotal()
+
 
 
 
@@ -71,13 +73,17 @@ def get_er_budget_view(request):
 @api_view(['POST'])
 def concentrado_resultados_view(request):
     year = request.data.get('year', 2024)
+
     with ThreadPoolExecutor() as executor:
         future_og = executor.submit(concentrado_og, year)
         future_compact = executor.submit(concentrado_compact, year)
+        future_petrotal = executor.submit(modeloER.concept_costo_petrotal, year)
+        future_flete_petrotal = executor.submit(modeloER.concept_flete_petrotal, year)
         resultadosOG = future_og.result()
         resultadosCompact = future_compact.result()
-
-    todos = resultadosOG + resultadosCompact
+        resultadosPetrotal = future_petrotal.result()
+        resultadosFletePetrotal = future_flete_petrotal.result()
+    todos = resultadosOG + resultadosCompact + resultadosPetrotal + resultadosFletePetrotal
     return Response(todos)
 
 
@@ -107,9 +113,12 @@ def concentrado_anual_view(request):
     df = pd.DataFrame(resultados)
     ensure_numeric(df, MESES)
     df['Concepto_filtrado'] = df['Concepto'].astype(str).str.strip().str.upper()
-
     sumas_por_rubro_cat_mes = agrupar_rubro_categoria(df, MESES)
 
+    df_last_year = pd.DataFrame(resultados_last_year)
+    ensure_numeric(df_last_year, MESES)
+    df_last_year['Concepto_filtrado'] = df_last_year['Concepto'].astype(str).str.strip().str.upper()
+    sumas_por_rubro_cat_mes_last_year = agrupar_rubro_categoria(df_last_year, MESES)
 
     with ThreadPoolExecutor() as executor:
         f1 = executor.submit(porcentajes_vs_ingresos_cat, sumas_por_rubro_cat_mes, MESES, 'ESTACIONES')
@@ -118,17 +127,20 @@ def concentrado_anual_view(request):
         f4 = executor.submit(obtener_secciones, df, sumas_por_rubro_cat_mes, MESES, 'STAFF')
         f5 = executor.submit(get_budget_view, year, MESES)
 
+        f6 = executor.submit(porcentajes_vs_ingresos_cat, sumas_por_rubro_cat_mes_last_year, MESES, 'ESTACIONES')
+        f7 = executor.submit(obtener_secciones, df_last_year, sumas_por_rubro_cat_mes_last_year, MESES, 'ESTACIONES')
+        f8 = executor.submit(obtener_secciones, df_last_year, sumas_por_rubro_cat_mes_last_year, MESES, 'STAFF')
+
+
+
         porcentajes_vs_ingresos = f1.result()
         porcentajes_vs_ingresos_staff = f2.result()
         secciones_estaciones = f3.result()
         secciones_staff = f4.result()
         budget = f5.result()
-
-
-    df= pd.DataFrame(resultados_last_year)
-    ensure_numeric(df, MESES)
-    df['Concepto_filtrado'] = df['Concepto'].astype(str).str.strip().str.upper()
-    sumas_por_rubro_cat_mes_last_year = agrupar_rubro_categoria(df, MESES)
+        porcentajes_vs_ingresos_last_year = f6.result()
+        secciones_estaciones_last_year = f7.result()
+        secciones_staff_last_year = f8.result()
 
     return Response({
         "sumas_por_rubro_mes": sumas_por_rubro_cat_mes,
@@ -136,15 +148,20 @@ def concentrado_anual_view(request):
         "resultados": resultados,
         "budget": budget,
         "porcentajes_vs_ingresos": porcentajes_vs_ingresos,
+        "porcentajes_vs_ingresos_last_year": porcentajes_vs_ingresos_last_year,
         "porcentajes_vs_ingresos_staff": porcentajes_vs_ingresos_staff,
         "secciones_estaciones": secciones_estaciones,
-        "secciones_staff": secciones_staff
+        "secciones_estaciones_last_year": secciones_estaciones_last_year,
+        "secciones_staff": secciones_staff,
+        "secciones_staff_last_year": secciones_staff_last_year
     })
 def obtener_resultados_anuales(year):
     with ThreadPoolExecutor() as executor:
         future_og = executor.submit(concentrado_og, year)
         future_compact = executor.submit(concentrado_compact, year)
-        return future_og.result() + future_compact.result()
+        future_petrotal = executor.submit(modeloER.concept_costo_petrotal, year)
+        future_flete_petrotal = executor.submit(modeloER.concept_flete_petrotal, year)
+        return future_og.result() + future_compact.result() + future_petrotal.result() + future_flete_petrotal.result()
 
 def ensure_numeric(df, columns):
     for col in columns:
@@ -409,6 +426,33 @@ def er_petrotal(request):
 
 
         data = modelo.utilidad_petrotal_estacion(date,fecha_ultimo_dia)
+
+        if not data:
+            return Response({"error": "No se encontraron datos para la fecha especificada"}, status=404)
+
+        return Response(data)
+    
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+@api_view(['GET', 'POST'])
+def gasto_petrotal(request):
+    """
+    Endpoint para obtener el gasto de ER Petrotal.
+    """
+    try:
+        date = request.data.get('date') if request.method == 'POST' else request.query_params.get('date')
+        if not date:
+            return Response({"error": "La fecha es requerida"}, status=400)
+        modelo = Erpetrotal()
+
+        date_obj = datetime.datetime.strptime(date, '%Y-%m-%d')
+        ultimo_dia = calendar.monthrange(date_obj.year, date_obj.month)[1]
+        fecha_ultimo_dia = datetime.date(date_obj.year, date_obj.month, ultimo_dia)
+        print(fecha_ultimo_dia)  
+
+
+        data = modelo.gasto_petrotal_estacion(date,fecha_ultimo_dia)
 
         if not data:
             return Response({"error": "No se encontraron datos para la fecha especificada"}, status=404)

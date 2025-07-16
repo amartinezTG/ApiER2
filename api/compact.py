@@ -45,7 +45,7 @@ class Compact:
                 case 
                     when t3.id in (9,13) then 'STAFF'
                     when t3.id in (5,17) then 'ESTACIONES'
-                    when t3.id = 21 then 'CORPORATIVO''
+                    when t3.id = 21 then 'CORPORATIVO'
                     ELSE 'n/a'
                 END AS [CatCentroCosto],
             """
