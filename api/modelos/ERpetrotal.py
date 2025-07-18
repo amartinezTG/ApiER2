@@ -326,7 +326,8 @@ class Erpetrotal:
             SUM(CASE WHEN Mes = 9 THEN Valor ELSE 0 END) AS [Septiembre],
             SUM(CASE WHEN Mes = 10 THEN Valor ELSE 0 END) AS [Octubre],
             SUM(CASE WHEN Mes = 11 THEN Valor ELSE 0 END) AS [Noviembre],
-            SUM(CASE WHEN Mes = 12 THEN Valor ELSE 0 END) AS [Diciembre]
+            SUM(CASE WHEN Mes = 12 THEN Valor ELSE 0 END) AS [Diciembre],
+            'petrotal' AS origin
         FROM unpivot_tabla
         GROUP BY Empresa, [CentroCosto], [CatCentroCosto], [NoCuenta], [Rubro], [Concepto]
         ORDER BY [CentroCosto], [Concepto]
@@ -437,7 +438,8 @@ class Erpetrotal:
             SUM(CASE WHEN Mes = 9 THEN Valor ELSE 0 END) AS [Septiembre],
             SUM(CASE WHEN Mes = 10 THEN Valor ELSE 0 END) AS [Octubre],
             SUM(CASE WHEN Mes = 11 THEN Valor ELSE 0 END) AS [Noviembre],
-            SUM(CASE WHEN Mes = 12 THEN Valor ELSE 0 END) AS [Diciembre]
+            SUM(CASE WHEN Mes = 12 THEN Valor ELSE 0 END) AS [Diciembre],
+            'petrotal' AS origin
         FROM FleteMensual
         GROUP BY Empresa, CentroCosto, CatCentroCosto, NoCuenta, Rubro, Concepto
         ORDER BY CentroCosto, Concepto

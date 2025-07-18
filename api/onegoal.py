@@ -95,7 +95,8 @@ def concentrado_og(year):
                 SUM(CASE WHEN t.mes = 9 THEN t.monto * -1 ELSE 0 END) AS Septiembre,
                 SUM(CASE WHEN t.mes = 10 THEN t.monto * -1 ELSE 0 END) AS Octubre,
                 SUM(CASE WHEN t.mes = 11 THEN t.monto * -1 ELSE 0 END) AS Noviembre,
-                SUM(CASE WHEN t.mes = 12 THEN t.monto * -1 ELSE 0 END) AS Diciembre
+                SUM(CASE WHEN t.mes = 12 THEN t.monto * -1 ELSE 0 END) AS Diciembre,
+                'onegoal' AS origin
             FROM (
                 SELECT 
                     cs.des AS categoria,

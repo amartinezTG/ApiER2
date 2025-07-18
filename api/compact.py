@@ -161,7 +161,8 @@ def concentrado_compact(year):
                 CASE WHEN t2.Tipo = 'H' THEN (t1.Importe9  - t1.Importe8) ELSE -(t1.Importe9  - t1.Importe8) END AS Septiembre,
                 CASE WHEN t2.Tipo = 'H' THEN (t1.Importe10 - t1.Importe9) ELSE -(t1.Importe10 - t1.Importe9) END AS Octubre,
                 CASE WHEN t2.Tipo = 'H' THEN (t1.Importe11 - t1.Importe10) ELSE -(t1.Importe11 - t1.Importe10) END AS Noviembre,
-                CASE WHEN t2.Tipo = 'H' THEN (t1.Importe12 - t1.Importe11) ELSE -(t1.Importe12 - t1.Importe11) END AS Diciembre
+                CASE WHEN t2.Tipo = 'H' THEN (t1.Importe12 - t1.Importe11) ELSE -(t1.Importe12 - t1.Importe11) END AS Diciembre,
+                'compact' AS origin
             FROM [{base}].dbo.SaldosSegmentoNegocio AS t1
             LEFT JOIN [{base}].dbo.Cuentas AS t2 ON t1.IdCuenta  = t2.ID
             LEFT JOIN [{base}].dbo.SegmentosNegocio AS t3 ON t1.IdSegNeg  = t3.Id

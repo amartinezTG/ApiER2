@@ -23,11 +23,12 @@ from .onegoal import concentrado_og
 from .compact import concentrado_compact
 from .controlgas import ControlGas
 from api.modelos.ERpetrotal import Erpetrotal
+from api.modelos.ERAjustes import ERAjustes
 import datetime
 import calendar
 
 modeloER = Erpetrotal()
-
+modeloERAjustes = ERAjustes()
 
 
 
@@ -79,11 +80,14 @@ def concentrado_resultados_view(request):
         future_compact = executor.submit(concentrado_compact, year)
         future_petrotal = executor.submit(modeloER.concept_costo_petrotal, year)
         future_flete_petrotal = executor.submit(modeloER.concept_flete_petrotal, year)
+        future_ajustes = executor.submit(modeloERAjustes.get_erajustes, year)
+
         resultadosOG = future_og.result()
         resultadosCompact = future_compact.result()
         resultadosPetrotal = future_petrotal.result()
         resultadosFletePetrotal = future_flete_petrotal.result()
-    todos = resultadosOG + resultadosCompact + resultadosPetrotal + resultadosFletePetrotal
+        resultadosERAjustes = future_ajustes.result()
+    todos = resultadosOG + resultadosCompact + resultadosPetrotal + resultadosFletePetrotal + resultadosERAjustes
     return Response(todos)
 
 
@@ -109,6 +113,7 @@ def concentrado_anual_view(request):
 
         resultados = future_current.result()
         resultados_last_year = future_last.result()
+    
 
     df = pd.DataFrame(resultados)
     ensure_numeric(df, MESES)
@@ -161,7 +166,17 @@ def obtener_resultados_anuales(year):
         future_compact = executor.submit(concentrado_compact, year)
         future_petrotal = executor.submit(modeloER.concept_costo_petrotal, year)
         future_flete_petrotal = executor.submit(modeloER.concept_flete_petrotal, year)
-        return future_og.result() + future_compact.result() + future_petrotal.result() + future_flete_petrotal.result()
+        future_ajustes = executor.submit(modeloERAjustes.get_erajustes, year)
+
+        resultadosOG = future_og.result()
+        resultadosCompact = future_compact.result()
+        resultadosPetrotal = future_petrotal.result()
+        resultadosFletePetrotal = future_flete_petrotal.result()
+        resultadosERAjustes = future_ajustes.result()
+
+    todos = resultadosOG + resultadosCompact + resultadosPetrotal + resultadosFletePetrotal + resultadosERAjustes
+
+    return todos
 
 def ensure_numeric(df, columns):
     for col in columns:
