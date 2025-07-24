@@ -12,7 +12,10 @@ from .views import (
 from .TG_php.views import (
     estacion_porcentaje,
     porcent_estacion_facturados_info,
-    porcent_facturas_info
+    porcent_facturas_info,
+    estacion_despachos_porcentaje,
+    estacion_despachos_facturados_porcentaje,
+    estacion_comparacion_series
 )
 
 
@@ -29,5 +32,9 @@ urlpatterns = [
     path('porcent_estacion_facturados_info/', porcent_estacion_facturados_info),
     path('porcent_facturas_info/', porcent_facturas_info),
     path('gasto_petrotal/', gasto_petrotal),
+    path('estacion_despachos_porcentaje/', estacion_despachos_porcentaje),
+    path('estacion_despachos_facturados_porcentaje/', estacion_despachos_facturados_porcentaje),
+    path('estacion_comparacion_series/', estacion_comparacion_series),
+
 
 ]
