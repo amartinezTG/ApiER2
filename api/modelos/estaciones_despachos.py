@@ -10,11 +10,11 @@ class EstacionDespachos:
     def estaciones(self):
         sql = """
         SELECT
-        Servidor,BaseDatos,Codigo,Nombre
-            FROM [TG].[dbo].[Estaciones]
+        t1.Servidor,t1.BaseDatos,t1.Codigo,t1.Nombre,t2.codemp
+            FROM [TG].[dbo].[Estaciones] t1
+			LEFT JOIN SG12.dbo.Gasolineras t2 on t1.Codigo =t2.cod
         WHERE 
-        Codigo in (2,3,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40)
-        --Codigo in (2,2,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19)
+        t1.Codigo not  in (0,4,20)
 
         ---- activa = 1 and Codigo != 0;
         """

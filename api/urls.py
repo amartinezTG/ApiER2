@@ -15,7 +15,8 @@ from .TG_php.views import (
     porcent_facturas_info,
     estacion_despachos_porcentaje,
     estacion_despachos_facturados_porcentaje,
-    estacion_comparacion_series
+    estacion_comparacion_series,
+    estacion_documentos_compra
 )
 
 
@@ -35,6 +36,8 @@ urlpatterns = [
     path('estacion_despachos_porcentaje/', estacion_despachos_porcentaje),
     path('estacion_despachos_facturados_porcentaje/', estacion_despachos_facturados_porcentaje),
     path('estacion_comparacion_series/', estacion_comparacion_series),
+    #documentos
+    path('estacion_documentos_compra/', estacion_documentos_compra),
 
 
 ]
