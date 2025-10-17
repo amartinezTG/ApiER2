@@ -18,6 +18,7 @@ from .TG_php.views import (
     estacion_comparacion_series,
     estacion_documentos_compra
 )
+from .XmlCre.views import xmlCre
 
 
 urlpatterns = [
@@ -38,6 +39,7 @@ urlpatterns = [
     path('estacion_comparacion_series/', estacion_comparacion_series),
     #documentos
     path('estacion_documentos_compra/', estacion_documentos_compra),
-
+    # Rutas para XmlCre
+    path('xmlCre/', xmlCre),
 
 ]
