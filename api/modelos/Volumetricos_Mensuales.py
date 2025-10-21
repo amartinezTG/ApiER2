@@ -1,4 +1,3 @@
-# En tu modelo Volumetricos_Mensuales.py
 import pyodbc
 from api.db_connections import CONTROLGASTG_CONN_STR
 from datetime import datetime, timedelta
@@ -31,8 +30,10 @@ class VolumetricosMensuales:
         WHERE t1.xml_contenido IS NOT NULL 
             AND t1.periodo = CONVERT(date, ?, 23)
         """
+        print("Fecha de consulta:", date)
+        print("Codgas:", codgas)
         
-        if codgas:
+        if  codgas != '0':
             print("=" * 50)
             print("Con codgas:", codgas)
             query += " AND t2.Codigo = ?"

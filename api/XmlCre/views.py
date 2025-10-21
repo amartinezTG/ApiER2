@@ -1,3 +1,4 @@
+# api/views/xmlCre.py
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
@@ -5,12 +6,12 @@ import pyodbc
 from datetime import date, timedelta
 from api.db_connections import CONTROLGASTG_CONN_STR
 from api.modelos.Volumetricos_Mensuales import VolumetricosMensuales
+from api.modelos.estaciones_despachos import EstacionDespachos
+from api.modelos.despachos_mensuales import DespachosMensuales
 import xml.etree.ElementTree as ET
-import re
 from collections import defaultdict
 from api.XmlCre.utils.xml_parser import ESTACIONES
-
-# Diccionario de estaciones
+from concurrent.futures import ThreadPoolExecutor
 
 
 def last_day_previous_month(today: date = None) -> date:
@@ -20,9 +21,33 @@ def last_day_previous_month(today: date = None) -> date:
     first_this_month = today.replace(day=1)
     return first_this_month - timedelta(days=1)
 
+
+def get_month_range(target_date: date) -> tuple:
+    """
+    Obtiene el primer y último día del mes de una fecha dada
+    
+    Args:
+        target_date: Fecha del mes a procesar
+        
+    Returns:
+        Tupla con (primer_dia, ultimo_dia)
+    """
+    primer_dia = target_date.replace(day=1)
+    
+    # Obtener último día del mes
+    if target_date.month == 12:
+        ultimo_dia = target_date.replace(day=31)
+    else:
+        siguiente_mes = target_date.replace(month=target_date.month + 1, day=1)
+        ultimo_dia = siguiente_mes - timedelta(days=1)
+    
+    return primer_dia, ultimo_dia
+
+
 def text_or_none(elem):
     """Helper para extraer texto de elementos XML"""
     return elem.text.strip() if elem is not None and elem.text is not None else None
+
 
 def parse_volumetricos_formato_excel(xml_string, nombre_archivo, cod_estacion):
     """Parsea el XML en el mismo formato que tu script de Excel"""
@@ -43,7 +68,8 @@ def parse_volumetricos_formato_excel(xml_string, nombre_archivo, cod_estacion):
                 "archivo": nombre_archivo,
                 "Estación": nombre_estacion,
                 "FechaYHoraReporteMes": fecha_reporte,
-                "MarcaComercial": text_or_none(prod.find(".//Covol:MarcaComercial", NS))
+                "MarcaComercial": text_or_none(prod.find(".//Covol:MarcaComercial", NS)),
+                "Origen": "XML_mensual"
             }
             
             entregas = prod.find(".//Covol:REPORTEDEVOLUMENMENSUAL/Covol:ENTREGAS", NS)
@@ -98,14 +124,12 @@ def generar_nombre_archivo(row):
     file_path = row.get('file_path')
     nombre_archivo = None
     
-    # Intentar extraer nombre del file_path
     if file_path:
         try:
             nombre_archivo = file_path.split('/')[-1] if '/' in file_path else file_path.split('\\')[-1]
         except:
             nombre_archivo = None
     
-    # Si no hay nombre o no empieza con "M_", construirlo
     if not nombre_archivo or not nombre_archivo.startswith("M_"):
         clave_instalacion = row.get('clave_instalacion')
         periodo = row.get('periodo')
@@ -116,7 +140,6 @@ def generar_nombre_archivo(row):
         if clave_str and not clave_str.startswith("EDS-"):
             clave_str = f"EDS-{clave_str}"
         
-        # Manejar periodo como string o date
         if isinstance(periodo, str):
             yymm = periodo[:7]
         else:
@@ -130,15 +153,7 @@ def generar_nombre_archivo(row):
 
 
 def procesar_xml_rows(xml_rows):
-    """
-    Procesa todas las filas de XML y extrae los productos
-    
-    Args:
-        xml_rows: Lista de diccionarios con datos de volumétricos
-        
-    Returns:
-        Lista de productos extraídos de todos los XMLs
-    """
+    """Procesa todas las filas de XML y extrae los productos"""
     all_productos = []
     
     for row in xml_rows:
@@ -149,12 +164,9 @@ def procesar_xml_rows(xml_rows):
             print(f"[WARNING] Fila sin XML o código de estación: ID {row.get('id')}")
             continue
         
-        # Generar nombre de archivo
         nombre_archivo = generar_nombre_archivo(row)
-        
         print(f"[DEBUG] Procesando: {nombre_archivo}, Estación: {codigo_estacion}")
         
-        # Parsear el XML
         productos = parse_volumetricos_formato_excel(xml_contenido, nombre_archivo, codigo_estacion)
         
         if productos:
@@ -166,95 +178,104 @@ def procesar_xml_rows(xml_rows):
     return all_productos
 
 
-def generar_resumen_por_producto(productos):
+def combinar_datos_xml_y_db(productos_xml, despachos_db):
     """
-    Genera un resumen agrupado por producto con totales
+    Combina los datos del XML y la base de datos en un solo arreglo.
+    Normaliza los nombres de campos para que sean consistentes.
     
     Args:
-        productos: Lista de productos procesados
+        productos_xml: Lista de productos desde XML
+        despachos_db: Lista de productos desde base de datos
         
     Returns:
-        Lista de diccionarios con resumen por producto
+        Lista combinada de productos con estructura uniforme
     """
-    # Usar defaultdict para evitar inicialización manual
-    resumen = defaultdict(lambda: {
-        "producto": "",
-        "total_entregas": 0,
-        "volumen_total": 0.0,
-        "total_documentos": 0,
-        "importe_total": 0.0,
-        "suma_volumen_cfdis": 0.0,
-        "registros": []
-    })
+    resultado_combinado = []
     
-    for prod in productos:
-        marca = prod.get("MarcaComercial", "Sin marca")
-        
-        # Inicializar el nombre del producto si es la primera vez
-        if not resumen[marca]["producto"]:
-            resumen[marca]["producto"] = marca
-        
-        # Acumular totales (manejo seguro de None)
-        if prod.get("TotalEntregasMes") is not None:
-            resumen[marca]["total_entregas"] += prod["TotalEntregasMes"]
-        
-        if prod.get("SumaVolumenEntregadoMes_ValorNumerico") is not None:
-            resumen[marca]["volumen_total"] += prod["SumaVolumenEntregadoMes_ValorNumerico"]
-        
-        if prod.get("TotalDocumentosMes") is not None:
-            resumen[marca]["total_documentos"] += prod["TotalDocumentosMes"]
-        
-        if prod.get("ImporteTotalEntregasMes") is not None:
-            resumen[marca]["importe_total"] += prod["ImporteTotalEntregasMes"]
-        
-        if prod.get("SumaVolumenCFDIs") is not None:
-            resumen[marca]["suma_volumen_cfdis"] += prod["SumaVolumenCFDIs"]
-        
-        resumen[marca]["registros"].append(prod)
+    # Agregar productos del XML (ya tienen la estructura correcta)
+    for producto in productos_xml:
+        resultado_combinado.append(producto)
     
-    # Convertir a lista y redondear valores
-    resumen_lista = []
-    for marca, datos in resumen.items():
-        resumen_lista.append({
-            "producto": datos["producto"],
-            "total_entregas": datos["total_entregas"],
-            "volumen_total": round(datos["volumen_total"], 3),
-            "total_documentos": datos["total_documentos"],
-            "importe_total": round(datos["importe_total"], 2),
-            "suma_volumen_cfdis": round(datos["suma_volumen_cfdis"], 3),
-            "num_estaciones": len(set(r["Estación"] for r in datos["registros"]))
-        })
+    # Agregar productos de la DB, normalizando los campos
+    for despacho in despachos_db:
+        # Crear estructura similar al XML pero con datos de DB
+        producto_db = {
+            "Producto": despacho.get("Producto"),
+            "codprd": despacho.get("codprd"),
+            "Origen": despacho.get("Origen", "DB_despachos"),
+            
+            # Métricas principales
+            "TotalEntregasMes": despacho.get("TotalEntregasMes"),
+            "SumaVolumenEntregadoMes_ValorNumerico": despacho.get("SumaVolumenEntregadoMes_ValorNumerico"),
+            "monto": despacho.get("monto"),
+            
+            # Métricas de documentos
+            "TotalDocumentosMes": despacho.get("TotalDocumentosMes"),
+            "ImporteTotalEntregasMes": despacho.get("ImporteTotalEntregasMes"),
+            "SumaVolumenCFDIs": despacho.get("SumaVolumenCFDIs"),
+            "documentos": despacho.get("documentos"),
+            
+            # Campos que no tiene DB pero sí XML (los ponemos en None)
+            "archivo": None,
+            "Estación": None,
+            "FechaYHoraReporteMes": None,
+            "MarcaComercial": despacho.get("Producto")  # Usamos Producto como MarcaComercial
+        }
+        
+        resultado_combinado.append(producto_db)
     
-    return resumen_lista
+    print(f"[INFO] Combinados {len(productos_xml)} productos XML + {len(despachos_db)} productos DB = {len(resultado_combinado)} total")
+    
+    return resultado_combinado
 
 
 @api_view(['GET', 'POST'])
 def xmlCre(request):
     """
-    Endpoint principal para procesar volumétricos mensuales
+    Endpoint principal para procesar volumétricos mensuales y comparar con despachos
     """
     print("=" * 50)
     print("INICIANDO xmlCre")
     print("=" * 50)
     
     volumetricos_model = VolumetricosMensuales()
+    estacion_despachos = EstacionDespachos()
+    despachos_model = DespachosMensuales()
 
     try:
         # Obtener fecha del mes pasado
         target_period = last_day_previous_month()
         target_str = target_period.strftime("%Y-%m-%d")
-
-        print(f"[INFO] Fecha objetivo para consulta: {target_str}")
-
-        # Parámetros opcionales del request
         codgas = request.data.get('codgas', None)
-        
-        # Consultar base de datos
-        xml_rows = volumetricos_model.control_volumetricos_mensuales(target_str, codgas)
+
+        # Ejecutar consultas en paralelo
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_xml_rows = executor.submit(
+                volumetricos_model.control_volumetricos_mensuales, 
+                target_str, 
+                codgas
+            )
+            future_estacion = executor.submit(
+                estacion_despachos.estacion_by_id, 
+                codgas
+            )
+            
+            try:
+                xml_rows = future_xml_rows.result(timeout=60)
+                estacion = future_estacion.result(timeout=60)
+            except Exception as e:
+                print(f"[ERROR] Error al obtener resultados: {e}")
+                return Response({
+                    "success": False,
+                    "error": f"Error al obtener resultados: {str(e)}"
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         if not xml_rows:
             return Response({
                 "success": False,
+                "estacion": estacion,
+                "periodo": target_str,
+                "codgas": codgas,
                 "data": [],
                 "message": f"No se encontraron registros para el período {target_str}"
             }, status=status.HTTP_404_NOT_FOUND)
@@ -263,19 +284,48 @@ def xmlCre(request):
 
         # Procesar todos los XMLs
         all_productos = procesar_xml_rows(xml_rows)
-        
         print(f"[INFO] Total de productos procesados: {len(all_productos)}")
 
-        # Generar resumen por producto
-        # resumen_lista = generar_resumen_por_producto(all_productos)
+        # Obtener datos de despachos si hay información de estación
+        despachos_data = []
+        if estacion and len(estacion) > 0:
+            estacion_info = estacion[0]
+            servidor = estacion_info.get('Servidor')
+            base_datos = estacion_info.get('BaseDatos')
+
+            if servidor and base_datos:
+                print(f"[INFO] Consultando despachos en {servidor}/{base_datos}")
+
+                # Obtener rango del mes
+                fecha_inicial, fecha_final = get_month_range(target_period)
+                print(f"[INFO] Periodo de consulta: {fecha_inicial} - {fecha_final}")
+                
+                try:
+                    despachos_data = despachos_model.obtener_resumen_productos(
+                        servidor=servidor,
+                        base_datos=base_datos,
+                        fecha_inicial=fecha_inicial,
+                        fecha_final=fecha_final
+                    )
+                    print(f"[INFO] Se obtuvieron {len(despachos_data)} productos de despachos")
+                except Exception as e:
+                    print(f"[WARNING] Error al obtener despachos: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    despachos_data = []
+
+        # NUEVO: Combinar ambas fuentes de datos
+        datos_combinados = combinar_datos_xml_y_db(all_productos, despachos_data)
 
         return Response({
             "success": True,
             "periodo": target_str,
-            "total_registros_xml": len(xml_rows),
-            "total_productos_procesados": len(all_productos),
-            # "resumen_por_producto": resumen_lista,
-            "detalle_completo": all_productos
+            # "estacion": estacion,
+            # "total_registros_xml": len(xml_rows),
+            # "total_productos_xml": len(all_productos),
+            # "total_productos_db": len(despachos_data),
+            # "total_combinado": len(datos_combinados),
+            "datos": datos_combinados  # ARRAY ÚNICO COMBINADO
         }, status=status.HTTP_200_OK)
             
     except pyodbc.Error as e:

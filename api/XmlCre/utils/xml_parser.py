@@ -11,8 +11,8 @@ NS = {
 
 ESTACIONES = {
     "0002": "Gemela Grande",
-    "0003": "Aguascalientes",
-    # "0005": "Lerdo",
+    # "0003": "Aguascalientes",
+    "0005": "Lerdo",
     # "0006": "Lopez Mateos",
     # "0007": "Gemela Chica",
     # "0008": "Municipio Libre",

@@ -13,15 +13,35 @@ class EstacionDespachos:
         t1.Servidor,t1.BaseDatos,t1.Codigo,t1.Nombre,t2.codemp
             FROM [TG].[dbo].[Estaciones] t1
 			LEFT JOIN SG12.dbo.Gasolineras t2 on t1.Codigo =t2.cod
-        WHERE 
+        WHERE
         t1.Codigo not  in (0,4,20)
-
         ---- activa = 1 and Codigo != 0;
         """
         try:
             with pyodbc.connect(self.conn_str) as conn:
                 cursor = conn.cursor()
                 cursor.execute(sql)
+                cols = [col[0] for col in cursor.description]
+                rows = cursor.fetchall()
+            return [dict(zip(cols, row)) for row in rows]
+        except pyodbc.Error as e:
+            # podrías usar logging en lugar de print
+            print(f"ControlGas DB error: {e}")
+            return []
+    def estacion_by_id(self, estacion_id):
+        sql = """
+        SELECT
+        t1.Servidor,t1.BaseDatos,t1.Codigo,t1.Nombre,t2.codemp
+            FROM [TG].[dbo].[Estaciones] t1
+			LEFT JOIN SG12.dbo.Gasolineras t2 on t1.Codigo =t2.cod
+        WHERE
+        t1.Codigo = ?
+        ---- activa = 1 and Codigo = ?;
+        """
+        try:
+            with pyodbc.connect(self.conn_str) as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql, (estacion_id,))
                 cols = [col[0] for col in cursor.description]
                 rows = cursor.fetchall()
             return [dict(zip(cols, row)) for row in rows]
