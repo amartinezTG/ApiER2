@@ -30,36 +30,27 @@ class VolumetricosMensuales:
         WHERE t1.xml_contenido IS NOT NULL 
             AND t1.periodo = CONVERT(date, ?, 23)
         """
-        print("Fecha de consulta:", date)
-        print("Codgas:", codgas)
-        
         if  codgas != '0':
-            print("=" * 50)
-            print("Con codgas:", codgas)
             query += " AND t2.Codigo = ?"
             params = (date, codgas)
-            print("Params:", params)
         else:
-            print("=" * 50)
-            print("Sin codgas - Trae todas las estaciones")
-            params = (date,)
-            print("Params:", params)
-        
+            params = (date)
+
         query += " ORDER BY t1.station_id, t1.id"
-        
+
         try:
             with pyodbc.connect(self.conn_str) as conn:
                 cursor = conn.cursor()
                 cursor.execute(query, params)
                 cols = [col[0] for col in cursor.description]
                 rows = cursor.fetchall()
-            
+
             # Opción A: Devolver como diccionarios (mantén como está)
             result = [dict(zip(cols, row)) for row in rows]
-            
+
             # Opción B: Devolver como objetos (descomenta si prefieres usar row.id)
             # result = [VolumetricoRow(dict(zip(cols, row))) for row in rows]
-            
+
             print(f"[INFO] Se encontraron {len(result)} registros")
             return result
             

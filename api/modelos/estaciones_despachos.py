@@ -31,7 +31,8 @@ class EstacionDespachos:
     def estacion_by_id(self, estacion_id):
         sql = """
         SELECT
-        t1.Servidor,t1.BaseDatos,t1.Codigo,t1.Nombre,t2.codemp
+        t1.Servidor,t1.BaseDatos,t1.Codigo,t1.Nombre,t2.codemp,
+        REPLACE(ISNULL(t1.PermisoCRE, ''), '/', '_') AS PermisoCRE
             FROM [TG].[dbo].[Estaciones] t1
 			LEFT JOIN SG12.dbo.Gasolineras t2 on t1.Codigo =t2.cod
         WHERE
