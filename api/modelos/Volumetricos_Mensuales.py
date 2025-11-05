@@ -12,9 +12,10 @@ class VolumetricosMensuales:
     def __init__(self, conn_str: str = CONTROLGASTG_CONN_STR):
         self.conn_str = conn_str
     
-    def control_volumetricos_mensuales(self, date, codgas=None):
+    def control_volumetricos_mensuales(self, date, codgas=None, nombre_estacion=None):
         query = """
         SELECT 
+            '{nombre_estacion}' AS Estación,
             t1.id,
             t1.periodo,
             t1.clave_instalacion,

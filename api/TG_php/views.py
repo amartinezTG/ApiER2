@@ -5,8 +5,10 @@ from concurrent.futures import ThreadPoolExecutor , as_completed
 from django.http import HttpResponse
 from api.modelos.estaciones_despachos import EstacionDespachos
 from api.modelos.Documentos_estaciones import DocumentosEstaciones
-from collections import defaultdict
+from api.modelos.inventarios_estaciones import InventariosEstaciones
 
+from collections import defaultdict
+import json
 
 
 
@@ -285,3 +287,348 @@ def estacion_documentos_compra(request):
     if not resultados:
         return Response({"detail": "No se encontraron resultados"}, status=status.HTTP_404_NOT_FOUND)
     return Response(resultados, status=status.HTTP_200_OK)
+
+
+
+@api_view(['POST'])
+def inventarios_distribuido(request):
+    print("INICIANDO inventarios_distribuido")
+
+    try:
+        # Obtener parámetros
+        from_date = request.data.get('from')
+        until_date = request.data.get('until')
+        if not from_date or not until_date:
+            return Response(
+                {"detail": "Los parámetros 'from' y 'until' son requeridos"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        # Convertir fechas a formato int si vienen como string YYYY-MM-DD
+        if isinstance(from_date, str) and '-' in from_date:
+            from_date = from_date.replace('-', '')
+        if isinstance(until_date, str) and '-' in until_date:
+            until_date = until_date.replace('-', '')
+
+
+        # Obtener lista de estaciones
+        estacion_despachos = EstacionDespachos()
+        inventarios_model = InventariosEstaciones()
+        estaciones = estacion_despachos.estaciones()
+        
+        if not estaciones:
+            return Response(
+                {"detail": "No se encontraron estaciones configuradas"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        print(f"Total estaciones a consultar: {len(estaciones)}")
+
+        resultados = []
+        errores = 0
+        
+        # Consultar cada estación en paralelo
+        with ThreadPoolExecutor(max_workers=40) as executor:
+            future_to_est = {
+                executor.submit(
+                    inventarios_model.get_inventarios_estacion,
+                    est["Servidor"],
+                    est["BaseDatos"],
+                    est["Codigo"],
+                    from_date,
+                    until_date
+                ): est
+                for est in estaciones
+            }
+            
+            for future in as_completed(future_to_est):
+                est = future_to_est[future]
+                try:
+                    res = future.result()
+                    if res and len(res) > 0:
+                        resultados.append({
+                            "Estacion": est["Codigo"],
+                            "Servidor": est["Servidor"],
+                            "BaseDatos": est["BaseDatos"],
+                            "Nombre": est["Nombre"],
+                            "Resultados": res
+                        })
+                        print(f"✓ Estación {est['Nombre']}: {len(res)} registros")
+                    else:
+                        print(f"○ Estación {est['Nombre']}: Sin datos")
+                except Exception as e:
+                    errores += 1
+                    print(f"✗ Error en estación {est['Nombre']}: {str(e)}")
+                    # Continuar con las demás estaciones
+                    continue
+
+        print(f"Consulta completada: {len(resultados)} estaciones con datos, {errores} errores")
+
+        if not resultados:
+            return Response(
+                {"detail": "No se encontraron resultados para el rango de fechas especificado"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        return Response(resultados, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        print(f"Error general en inventarios_distribuido: {str(e)}")
+        return Response(
+            {"detail": f"Error interno: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+    
+@api_view(['POST'])
+def inventarios_detalles_distribuido(request):
+    """
+    Consulta detalles diarios de inventarios de UNA estación específica
+    """
+    print("INICIANDO inventarios_detalles_distribuido")
+    
+    try:
+        # Obtener parámetros
+        from_date = request.data.get('from')
+        until_date = request.data.get('until')
+        codgas = request.data.get('codgas')
+        codprd = request.data.get('codprd')
+        
+        if not all([from_date, until_date, codgas, codprd]):
+            return Response(
+                {"detail": "Los parámetros 'from', 'until', 'codgas' y 'codprd' son requeridos"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        print(f"Consultando detalles - Estación: {codgas}, Producto: {codprd}, Fechas: {from_date} - {until_date}")
+        
+        # Obtener información de la estación específica
+        estacion_despachos = EstacionDespachos()
+        inventarios_model = InventariosEstaciones()
+        estaciones = estacion_despachos.estaciones()
+        
+        # Buscar la estación específica
+        estacion = next((est for est in estaciones if est["Codigo"] == int(codgas)), None)
+        
+        if not estacion:
+            return Response(
+                {"detail": f"No se encontró la estación con código {codgas}"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        print(f"Consultando estación: {estacion['Nombre']}")
+        
+        # Consultar detalles
+        resultados = inventarios_model.get_detalles_estacion(
+            estacion["Servidor"],
+            estacion["BaseDatos"],
+            int(codgas),
+            int(codprd),
+            from_date,
+            until_date
+        )
+        
+        if not resultados or len(resultados) == 0:
+            return Response(
+                {"detail": "No se encontraron resultados para los parámetros especificados"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        print(f"✓ Consulta completada: {len(resultados)} registros")
+        
+        return Response({
+            "Estacion": estacion["Codigo"],
+            "Nombre": estacion["Nombre"],
+            "Resultados": resultados
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        print(f"Error general en inventarios_detalles_distribuido: {str(e)}")
+        return Response(
+            {"detail": f"Error interno: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+@api_view(['POST'])
+def tanques_estacion(request):
+    """
+    Obtiene la lista de tanques de una estación
+    """
+    print("INICIANDO tanques_estacion")
+    
+    try:
+        codgas = request.data.get('codgas')
+        servidor = request.data.get('servidor')
+        base = request.data.get('base')
+        
+        if not all([codgas, servidor, base]):
+            return Response(
+                {"detail": "Los parámetros 'codgas', 'servidor' y 'base' son requeridos"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        inventarios_model = InventariosEstaciones()
+        tanques = inventarios_model.get_tanques_estacion(servidor, base, int(codgas))
+        if not tanques:
+            return Response(
+                {"tanques": []},
+                status=status.HTTP_200_OK
+            )
+        
+        print(f"✓ Tanques encontrados: {len(tanques)}")
+        
+        return Response({"tanques": tanques}, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        print(f"Error en tanques_estacion: {str(e)}")
+        return Response(
+            {"detail": f"Error interno: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['POST'])
+def volumen_tanque(request):
+    """
+    Obtiene el historial de volumen de un tanque
+    """
+    print("INICIANDO volumen_tanque")
+    
+    try:
+        codgas = request.data.get('codgas')
+        codtan = request.data.get('codtan')
+        limit = request.data.get('limit', 100)
+        
+        if not all([codgas, codtan]):
+            return Response(
+                {"detail": "Los parámetros 'codgas' y 'codtan' son requeridos"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        print(f"Consultando volumen - Estación: {codgas}, Tanque: {codtan}, Límite: {limit}")
+        
+        # Obtener información de la estación
+        estacion_despachos = EstacionDespachos()
+        estaciones = estacion_despachos.estaciones()
+        estacion = next((est for est in estaciones if est["Codigo"] == int(codgas)), None)
+        
+        if not estacion:
+            return Response(
+                {"detail": f"No se encontró la estación con código {codgas}"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        inventarios_model = InventariosEstaciones()
+        resultados = inventarios_model.get_volumen_tanque(
+            estacion["Servidor"],
+            estacion["BaseDatos"],
+            int(codgas),
+            int(codtan),
+            int(limit)
+        )
+        
+        if not resultados:
+            return Response(
+                {"detail": "No se encontraron resultados"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        print(f"✓ Registros encontrados: {len(resultados)}")
+        
+        return Response({
+            "Estacion": estacion["Codigo"],
+            "Nombre": estacion["Nombre"],
+            "Resultados": resultados
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        print(f"Error en volumen_tanque: {str(e)}")
+        return Response(
+            {"detail": f"Error interno: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['POST'])
+def tanques_consolidado(request):
+    """
+    Consulta consolidada de todas las estaciones en paralelo
+    """
+    print("INICIANDO tanques_consolidado")
+    
+    try:
+        from_date = request.data.get('from')
+        until_date = request.data.get('until')
+        
+        if not all([from_date, until_date]):
+            return Response(
+                {"detail": "Los parámetros 'from' y 'until' son requeridos"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        print(f"Consultando todas las estaciones - Fechas: {from_date} a {until_date}")
+        
+        # Obtener todas las estaciones
+        estacion_despachos = EstacionDespachos()
+        inventarios_model = InventariosEstaciones()
+        estaciones = estacion_despachos.estaciones()
+        
+        # Filtrar estaciones excluidas
+        estaciones = [est for est in estaciones if est["Codigo"] not in [0, 4, 20]]
+        
+        if not estaciones:
+            return Response(
+                {"detail": "No se encontraron estaciones configuradas"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        print(f"Total estaciones a consultar: {len(estaciones)}")
+        
+        resultados = []
+        errores = 0
+        
+        # Consultar cada estación en paralelo
+        with ThreadPoolExecutor(max_workers=40) as executor:
+            future_to_est = {
+                executor.submit(
+                    inventarios_model.get_consolidado_tanques,
+                    est["Servidor"],
+                    est["BaseDatos"],
+                    est["Codigo"],
+                    from_date,
+                    until_date
+                ): est
+                for est in estaciones
+            }
+            
+            for future in as_completed(future_to_est):
+                est = future_to_est[future]
+                try:
+                    res = future.result()
+                    if res and len(res) > 0:
+                        for tanque in res:
+                            resultados.append({
+                                "Estacion": est["Nombre"],
+                                "CodEstacion": est["Codigo"],
+                                "Servidor": est["Servidor"],
+                                "BaseDatos": est["BaseDatos"],
+                                **tanque
+                            })
+                        print(f"✓ Estación {est['Nombre']}: {len(res)} tanques")
+                    else:
+                        print(f"○ Estación {est['Nombre']}: Sin datos")
+                except Exception as e:
+                    errores += 1
+                    print(f"✗ Error en estación {est['Nombre']}: {str(e)}")
+                    continue
+        
+        print(f"Consulta completada: {len(resultados)} registros de tanques, {errores} errores")
+        
+        if not resultados:
+            return Response(
+                {"detail": "No se encontraron resultados para el rango de fechas especificado"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        return Response(resultados, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        print(f"Error general en tanques_consolidado: {str(e)}")
+        return Response(
+            {"detail": f"Error interno: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

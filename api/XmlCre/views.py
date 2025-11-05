@@ -50,7 +50,7 @@ def text_or_none(elem):
     return elem.text.strip() if elem is not None and elem.text is not None else None
 
 
-def parse_volumetricos_formato_excel(xml_string, nombre_archivo, cod_estacion):
+def parse_volumetricos_formato_excel(xml_string, nombre_archivo, cod_estacion,nombre_estacion):
     """Parsea el XML en el mismo formato que tu script de Excel"""
     try:
         NS = {
@@ -60,7 +60,7 @@ def parse_volumetricos_formato_excel(xml_string, nombre_archivo, cod_estacion):
         
         root = ET.fromstring(xml_string)
         fecha_reporte = text_or_none(root.find(".//Covol:FechaYHoraReporteMes", NS))
-        nombre_estacion = ESTACIONES.get(cod_estacion, f"Desconocida ({cod_estacion})")
+        # nombre_estacion = ESTACIONES.get(cod_estacion, f"Desconocida ({cod_estacion})")
         
         productos_data = []
         
@@ -153,7 +153,7 @@ def generar_nombre_archivo(row):
     return nombre_archivo
 
 
-def procesar_xml_rows(xml_rows):
+def procesar_xml_rows(xml_rows,nombre_estacion):
     """Procesa todas las filas de XML y extrae los productos"""
     all_productos = []
     
@@ -168,7 +168,7 @@ def procesar_xml_rows(xml_rows):
         nombre_archivo = generar_nombre_archivo(row)
         print(f"[DEBUG] Procesando: {nombre_archivo}, Estación: {codigo_estacion}")
         
-        productos = parse_volumetricos_formato_excel(xml_contenido, nombre_archivo, codigo_estacion)
+        productos = parse_volumetricos_formato_excel(xml_contenido, nombre_archivo, codigo_estacion,nombre_estacion)
         
         if productos:
             print(f"[DEBUG] Se encontraron {len(productos)} productos en el XML")
@@ -182,57 +182,121 @@ def procesar_xml_rows(xml_rows):
 def combinar_datos_xml_y_db(productos_xml, despachos_db, volumetricos_diarios_data):
     """
     Combina los datos del XML mensual, base de datos y volumétricos diarios
-    
-    Args:
-        productos_xml: Lista de productos desde XML mensual
-        despachos_db: Lista de productos desde base de datos
-        volumetricos_diarios_data: Datos consolidados de XMLs diarios
-        
-    Returns:
-        Lista combinada de productos con estructura uniforme
+    en un formato plano con columna de origen
     """
+    # Mapeo de claves de producto a nombres comerciales
+    MAPEO_PRODUCTOS = {
+        ('07', '1'): 'T-Maxima Regular',
+        ('07', '2'): 'T-Super Premium',
+        ('03', '3'): 'Diesel Automotriz'
+    }
+    
+    # Mapeo inverso: de nombre comercial a claves
+    MAPEO_INVERSO = {v: k for k, v in MAPEO_PRODUCTOS.items()}
+    
+    # Crear diccionario de volumétricos diarios por clave
+    volumetricos_por_clave = {}
+    if volumetricos_diarios_data and volumetricos_diarios_data.get('success'):
+        for vol_diario in volumetricos_diarios_data.get('datos', []):
+            clave = (vol_diario.get('ClaveProducto'), vol_diario.get('ClaveSubProducto'))
+            volumetricos_por_clave[clave] = vol_diario
+    
     resultado_combinado = []
     
-    # Agregar productos del XML mensual
-    for producto in productos_xml:
-        resultado_combinado.append(producto)
-    
-    # Agregar productos de la DB
-    for despacho in despachos_db:
-        producto_db = {
-            "Producto": despacho.get("Producto"),
-            "codprd": despacho.get("codprd"),
-            "Origen": despacho.get("Origen", "DB_despachos"),
-            "TotalEntregasMes": despacho.get("TotalEntregasMes"),
-            "SumaVolumenEntregadoMes_ValorNumerico": despacho.get("SumaVolumenEntregadoMes_ValorNumerico"),
-            "monto": despacho.get("monto"),
-            "TotalDocumentosMes": despacho.get("TotalDocumentosMes"),
-            "ImporteTotalEntregasMes": despacho.get("ImporteTotalEntregasMes"),
-            "SumaVolumenCFDIs": despacho.get("SumaVolumenCFDIs"),
-            "documentos": despacho.get("documentos"),
-            "archivo": None,
-            "Estación": None,
-            "FechaYHoraReporteMes": None,
-            "MarcaComercial": despacho.get("Producto")
+    # 1. Procesar productos del XML mensual
+    for prod_xml in productos_xml:
+        marca = prod_xml.get('MarcaComercial', '')
+        clave = MAPEO_INVERSO.get(marca)
+        
+        fila = {
+            'Origen': 'XML_mensual',
+            'archivo': prod_xml.get('archivo'),
+            'Estación': prod_xml.get('Estación'),
+            'FechaYHoraReporteMes': prod_xml.get('FechaYHoraReporteMes'),
+            'MarcaComercial': marca,
+            'ClaveProducto': clave[0] if clave else None,
+            'ClaveSubProducto': clave[1] if clave else None,
+            'TotalEntregasMes': prod_xml.get('TotalEntregasMes'),
+            'SumaVolumenEntregadoMes_ValorNumerico': prod_xml.get('SumaVolumenEntregadoMes_ValorNumerico'),
+            'TotalDocumentosMes': prod_xml.get('TotalDocumentosMes'),
+            'ImporteTotalEntregasMes': prod_xml.get('ImporteTotalEntregasMes'),
+            'SumaVolumenCFDIs': prod_xml.get('SumaVolumenCFDIs'),
         }
-        resultado_combinado.append(producto_db)
+        
+        # Agregar datos de volumétricos diarios si existen
+        if clave and clave in volumetricos_por_clave:
+            vol_diario = volumetricos_por_clave[clave]
+            fila['VolumenTotalMes_Diarios'] = vol_diario.get('VolumenTotalMes')
+            fila['ImporteTotalMes_Diarios'] = vol_diario.get('ImporteTotalMes')
+            fila['TotalTransaccionesMes_Diarios'] = vol_diario.get('TotalTransaccionesMes')
+            fila['DiasConVenta'] = vol_diario.get('DiasConVenta')
+        
+        resultado_combinado.append(fila)
     
-    # Agregar productos de volumétricos diarios
+    # 2. Procesar productos de la base de datos (despachos)
+    for despacho in despachos_db:
+        nombre_producto = despacho.get('Producto', '')
+        clave = MAPEO_INVERSO.get(nombre_producto)
+        
+        fila = {
+            'Origen': 'DB_despachos',
+            'archivo': None,
+            'Estación': None,
+            'FechaYHoraReporteMes': None,
+            'MarcaComercial': nombre_producto,
+            'ClaveProducto': clave[0] if clave else None,
+            'ClaveSubProducto': clave[1] if clave else None,
+            'codprd': despacho.get('codprd'),
+            'TotalEntregasMes': despacho.get('TotalEntregasMes'),
+            'SumaVolumenEntregadoMes_ValorNumerico': despacho.get('SumaVolumenEntregadoMes_ValorNumerico'),
+            'TotalDocumentosMes': despacho.get('TotalDocumentosMes'),
+            'ImporteTotalEntregasMes': despacho.get('ImporteTotalEntregasMes'),
+            'SumaVolumenCFDIs': despacho.get('SumaVolumenCFDIs'),
+            'monto': despacho.get('monto'),
+            'documentos': despacho.get('documentos'),
+        }
+        
+        # Agregar datos de volumétricos diarios si existen
+        if clave and clave in volumetricos_por_clave:
+            vol_diario = volumetricos_por_clave[clave]
+            fila['VolumenTotalMes_Diarios'] = vol_diario.get('VolumenTotalMes')
+            fila['ImporteTotalMes_Diarios'] = vol_diario.get('ImporteTotalMes')
+            fila['TotalTransaccionesMes_Diarios'] = vol_diario.get('TotalTransaccionesMes')
+            fila['DiasConVenta'] = vol_diario.get('DiasConVenta')
+        
+        resultado_combinado.append(fila)
+    
+    # 3. Agregar filas de volumétricos diarios consolidados (opcional, si quieres verlos por separado)
     if volumetricos_diarios_data and volumetricos_diarios_data.get('success'):
-        for producto_diario in volumetricos_diarios_data.get('datos', []):
-            producto_consolidado = {
-                "ClaveProducto": producto_diario.get("ClaveProducto"),
-                "ClaveSubProducto": producto_diario.get("ClaveSubProducto"),
-                "VolumenTotalMes": producto_diario.get("VolumenTotalMes"),
-                "ImporteTotalMes": producto_diario.get("ImporteTotalMes"),
-                "TotalTransaccionesMes": producto_diario.get("TotalTransaccionesMes"),
-                "DiasConVenta": producto_diario.get("DiasConVenta"),
-                "Origen": producto_diario.get("Origen"),
-                "DetalleDiario": producto_diario.get("DetalleDiario")
+        for vol_diario in volumetricos_diarios_data.get('datos', []):
+            clave = (vol_diario.get('ClaveProducto'), vol_diario.get('ClaveSubProducto'))
+            nombre_producto = MAPEO_PRODUCTOS.get(clave, 'Desconocido')
+            
+            fila = {
+                'Origen': 'XML_diarios_consolidado',
+                'archivo': None,
+                'Estación': None,
+                'FechaYHoraReporteMes': None,
+                'MarcaComercial': nombre_producto,
+                'ClaveProducto': vol_diario.get('ClaveProducto'),
+                'ClaveSubProducto': vol_diario.get('ClaveSubProducto'),
+                'TotalEntregasMes': None,
+                'SumaVolumenEntregadoMes_ValorNumerico': None,
+                'TotalDocumentosMes': None,
+                'ImporteTotalEntregasMes': None,
+                'SumaVolumenCFDIs': None,
+                'VolumenTotalMes_Diarios': vol_diario.get('VolumenTotalMes'),
+                'ImporteTotalMes_Diarios': vol_diario.get('ImporteTotalMes'),
+                'TotalTransaccionesMes_Diarios': vol_diario.get('TotalTransaccionesMes'),
+                'DiasConVenta': vol_diario.get('DiasConVenta'),
             }
-            resultado_combinado.append(producto_consolidado)
+            
+            resultado_combinado.append(fila)
     
-    print(f"[INFO] Combinados: {len(productos_xml)} XML + {len(despachos_db)} DB + {len(volumetricos_diarios_data.get('datos', []) if volumetricos_diarios_data else [])} Diarios = {len(resultado_combinado)} total")
+    print(f"[INFO] Total de filas combinadas: {len(resultado_combinado)}")
+    print(f"  - XML mensual: {len(productos_xml)}")
+    print(f"  - DB despachos: {len(despachos_db)}")
+    print(f"  - XML diarios: {len(volumetricos_diarios_data.get('datos', []) if volumetricos_diarios_data else [])}")
     
     return resultado_combinado
 
@@ -253,6 +317,9 @@ def xmlCre(request):
     )
     estacion_despachos = EstacionDespachos()
     despachos_model = DespachosMensuales()
+    despachos_data = []
+    all_productos = []
+    volumetricos_diarios_data = []
 
     try:
         # Obtener fecha del mes pasado
@@ -260,105 +327,72 @@ def xmlCre(request):
         target_str = target_period.strftime("%Y-%m-%d")
         codgas = request.data.get('codgas', None)
         estacion =  estacion_despachos.estacion_by_id(codgas) if codgas else None
-
-        # Ejecutar consultas en paralelo
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            future_xml_rows = executor.submit(
-                volumetricos_model.control_volumetricos_mensuales, 
-                target_str, 
-                codgas
-            )
-
-            try:
-                xml_rows = future_xml_rows.result(timeout=60)
-            except Exception as e:
-                print(f"[ERROR] Error al obtener resultados: {e}")
-                return Response({
-                    "success": False,
-                    "error": f"Error al obtener resultados: {str(e)}"
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        if not xml_rows:
-            return Response({
-                "success": False,
-                "estacion": estacion,
-                "periodo": target_str,
-                "codgas": codgas,
-                "data": [],
-                "message": f"No se encontraron registros para el período {target_str}"
-            }, status=status.HTTP_404_NOT_FOUND)
-
-        # Procesar XMLs mensuales
-        all_productos = []
-        all_productos = procesar_xml_rows(xml_rows) ###descomentar para producción
-
-        # Obtener datos de despachos
-        despachos_data = []
         if estacion and len(estacion) > 0:
             estacion_info = estacion[0]
             servidor = estacion_info.get('Servidor')
             base_datos = estacion_info.get('BaseDatos')
+            fecha_inicial, fecha_final = get_month_range(target_period)
+            permiso_cre = estacion_info.get('PermisoCRE')
+            nombre_estacion = estacion_info.get('Nombre')
 
-            if servidor and base_datos:
-                fecha_inicial, fecha_final = get_month_range(target_period)
+            # Ejecutar consultas en paralelo
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                future_xml_rows = executor.submit(
+                    volumetricos_model.control_volumetricos_mensuales,
+                    target_str, 
+                    codgas,nombre_estacion
+                )
+                future_despachos = executor.submit(
+                    despachos_model.obtener_resumen_productos,
+                    servidor,
+                    base_datos,
+                    fecha_inicial,
+                    fecha_final,
+                    nombre_estacion
+                )
+                future_volumetricos_diarios = executor.submit(
+                    volumetricos_diarios_model.generar_resumen_mensual,
+                    nombre_estacion=nombre_estacion,
+                    permiso_cre=permiso_cre,
+                    mes=target_period,
+                    desconectar_al_final=True,
+                )
+
                 try:
-                    despachos_data = despachos_model.obtener_resumen_productos(
-                        servidor=servidor,
-                        base_datos=base_datos,
-                        fecha_inicial=fecha_inicial,
-                        fecha_final=fecha_final
-                    )
-                    print(f"[INFO] Se obtuvieron {len(despachos_data)} productos de despachos")
+                    xml_rows = future_xml_rows.result(timeout=60)
+                    despachos_data = future_despachos.result(timeout=60)
+                    volumetricos_diarios_data = future_volumetricos_diarios.result(timeout=60)
                 except Exception as e:
-                    print(f"[WARNING] Error al obtener despachos: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    despachos_data = []
+                    print(f"[ERROR] Error al obtener resultados: {e}")
+                    return Response({
+                        "success": False,
+                        "error": f"Error al obtener resultados: {str(e)}"
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # NUEVO: Procesar volumétricos diarios usando PermisoCRE
-        volumetricos_diarios_data = None
-
-        if estacion and len(estacion) > 0:
-            estacion_info = estacion[0]
-            permiso_cre = estacion_info.get('PermisoCRE')  # CAMBIO: Usar PermisoCRE en lugar de Servidor
-
-            if permiso_cre:
-                print(f"[INFO] Procesando volumétricos diarios del permiso {permiso_cre}")
-                try:
-                    volumetricos_diarios_data = volumetricos_diarios_model.generar_resumen_mensual(
-                        permiso_cre=permiso_cre,  # CAMBIO: Pasar permiso_cre en lugar de ip_servidor
-                        mes=target_period,
-                        desconectar_al_final=True
-                    )
-                    if volumetricos_diarios_data.get('success'):
-                        print(f"[INFO] Se procesaron {volumetricos_diarios_data.get('archivos_procesados')} archivos diarios")
-                    else:
-                        print(f"[WARNING] No se pudieron procesar volumétricos diarios: {volumetricos_diarios_data.get('mensaje')}")
-                except Exception as e:
-                    print(f"[WARNING] Error al procesar volumétricos diarios: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                print(f"[WARNING] No se encontró PermisoCRE para la estación {codgas}")
+            if not xml_rows or len(xml_rows) == 0 or despachos_data is None or len(despachos_data) == 0 or volumetricos_diarios_data is None or len(volumetricos_diarios_data) == 0:
+                return Response({
+                    "success": False,
+                    "estacion": estacion,
+                    "periodo": target_str,
+                    "codgas": codgas,
+                    "data": [],
+                    "message": f"No se encontraron registros para el período {target_str}"
+                }, status=status.HTTP_404_NOT_FOUND)
+            # Procesar XMLs mensuales
+            all_productos = procesar_xml_rows(xml_rows,nombre_estacion) ###descomentar para producción
 
 
         # Combinar todas las fuentes de datos
-        datos_combinados = combinar_datos_xml_y_db(all_productos, despachos_data, volumetricos_diarios_data)
+        # datos_combinados = combinar_datos_xml_y_db(all_productos, despachos_data, volumetricos_diarios_data)
 
         return Response({
             "success": True,
             "periodo": target_str,
-            "volumetricos_diarios": volumetricos_diarios_data,
-            "datos": datos_combinados
+            # "total_registros": len(datos_combinados),
+            "mensual":all_productos,
+            "despachos":despachos_data,
+            "diarios":volumetricos_diarios_data 
         }, status=status.HTTP_200_OK)
-            
-    except pyodbc.Error as e:
-        print(f"[ERROR] Error de base de datos: {e}")
-        return Response({
-            "success": False,
-            "error": f"Error de base de datos: {str(e)}"
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
     except Exception as e:
         print(f"[ERROR] Ocurrió un error: {e}")
         import traceback

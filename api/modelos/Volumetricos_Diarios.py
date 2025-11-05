@@ -277,8 +277,8 @@ class VolumetricosDiarios:
         except Exception as e:
             print(f"[ERROR] Error procesando {ruta_archivo}: {e}")
             return None
-    
-    def generar_resumen_mensual(self, permiso_cre: str, mes: date, desconectar_al_final: bool = False) -> Dict:
+
+    def generar_resumen_mensual(self,nombre_estacion: str, permiso_cre: str, mes: date, desconectar_al_final: bool = False) -> Dict:
         """
         Genera resumen mensual consolidado de todos los XMLs diarios de una estación
         
@@ -291,7 +291,6 @@ class VolumetricosDiarios:
         """
         archivos_xml = self.obtener_archivos_xml_mes(permiso_cre, mes)
         print(f"[INFO] Total archivos XML encontrados: {len(archivos_xml)}")
-
         if not archivos_xml:
             if desconectar_al_final:
                 self.desconectar_recurso_red()
@@ -350,8 +349,9 @@ class VolumetricosDiarios:
                 'ImporteTotalMes': round(datos['importe_total_mes'], 2),
                 'TotalTransaccionesMes': datos['total_transacciones_mes'],
                 'DiasConVenta': len(datos['dias_con_venta']),
-                'DetalleDiario': datos['detalle_diario'],
-                'Origen': 'XML_diarios_consolidado'
+                # 'DetalleDiario': datos['detalle_diario'],
+                'Origen': 'XML_diarios_consolidado',
+                'Estación': nombre_estacion
             })
 
         return {

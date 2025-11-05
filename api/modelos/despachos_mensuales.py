@@ -11,7 +11,7 @@ class DespachosMensuales:
     
     def __init__(self, conn_str: str = CONTROLGAS_CONN_STR):
         self.conn_str = conn_str
-    def obtener_resumen_productos(self, servidor,base_datos,fecha_inicial, fecha_final) -> List[Dict]:
+    def obtener_resumen_productos(self, servidor,base_datos,fecha_inicial, fecha_final,nombre_estacion) -> List[Dict]:
         sql = f"""
         DECLARE @Inicial date = '{fecha_inicial.replace(day=1)}';
         DECLARE @Final   date = '{fecha_final}';
@@ -57,6 +57,7 @@ class DespachosMensuales:
             GROUP BY p.codprd
         )
         SELECT
+        '{nombre_estacion}' AS Estación,
             COALESCE(e.codprd, c.codprd) AS codprd,
             CASE
                 WHEN COALESCE(e.codprd, c.codprd) IN (179,192) THEN 'T-Maxima Regular'

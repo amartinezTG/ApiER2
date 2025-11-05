@@ -16,7 +16,12 @@ from .TG_php.views import (
     estacion_despachos_porcentaje,
     estacion_despachos_facturados_porcentaje,
     estacion_comparacion_series,
-    estacion_documentos_compra
+    estacion_documentos_compra,
+    inventarios_distribuido,
+    inventarios_detalles_distribuido,
+    volumen_tanque,
+    tanques_estacion,
+    tanques_consolidado,
 )
 from .XmlCre.views import xmlCre
 
@@ -41,5 +46,11 @@ urlpatterns = [
     path('estacion_documentos_compra/', estacion_documentos_compra),
     # Rutas para XmlCre
     path('xmlCre/', xmlCre),
+    path('inventarios/', inventarios_distribuido),
+    path('inventarios/detalles/',  inventarios_detalles_distribuido),
+    path('tanques/estacion/', tanques_estacion),
+    path('tanques/volumen/', volumen_tanque),
+    path('tanques/consolidado/', tanques_consolidado),
+
 
 ]
