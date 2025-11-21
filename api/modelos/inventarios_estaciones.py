@@ -379,6 +379,86 @@ class InventariosEstaciones:
             print(f"Error: {e}")
             return []
         
+
+    def get_volumen_date_tanque(self, servidor, base_datos, codigo_estacion, codigo_tanque, from_date, until_date):
+        """
+        Obtiene el historial de volumen agregado por hora con valores min/max/avg
+        """
+        query = f"""
+        WITH DatosHora AS (
+            SELECT 
+                CONVERT(VARCHAR(10), DATEADD(day, -1, t1.fchtrn), 23) as fecha,
+                DATEPART(HOUR, DATEADD(MINUTE, t1.hratrn % 100, DATEADD(HOUR, t1.hratrn / 100, 0))) as hora,
+                t2.capope + capfon as capacidad_maxima,
+                t2.capope as capacidad_operativa,
+                t2.caputi as util,
+                t2.capfon as fondage,
+                t2.volmin as volumen_min,
+                t2.den as producto,
+                t1.vol,
+                t1.volCxT, 
+                t1.volh2o,
+                ROW_NUMBER() OVER (
+                    PARTITION BY 
+                        CONVERT(VARCHAR(10), DATEADD(day, -1, t1.fchtrn), 23),
+                        DATEPART(HOUR, DATEADD(MINUTE, t1.hratrn % 100, DATEADD(HOUR, t1.hratrn / 100, 0)))
+                    ORDER BY t1.nrotrn DESC
+                ) as rn
+            FROM [{base_datos}].[dbo].MovimientosTan t1
+            LEFT JOIN [{base_datos}].[dbo].Tanques t2 ON t1.codtan = t2.cod 
+            WHERE t1.codgas = {codigo_estacion}
+                AND t1.codtan = {codigo_tanque}
+                AND tiptrn NOT IN(2,3,4)
+                AND t1.vol > 0
+                AND t2.est = 0
+                AND t1.fchtrn BETWEEN {from_date} AND {until_date}
+        )
+        SELECT 
+            fecha,
+            CONCAT(CAST(hora AS VARCHAR), ':00:00') as hora,
+            capacidad_maxima,
+            capacidad_operativa,
+            util,
+            fondage,
+            volumen_min,
+            producto,
+            vol,
+            volCxT,
+            volh2o
+        FROM DatosHora
+        WHERE rn = 1  -- Solo el último registro de cada hora
+        ORDER BY fecha DESC, hora DESC
+        """
+        
+        query_escaped = query.replace("'", "''")
+        sql = f"SELECT * FROM OPENQUERY([{servidor}], '{query_escaped}')"
+        
+        try:
+            with pyodbc.connect(self.conn_str, timeout=60) as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql)
+                cols = [col[0] for col in cursor.description]
+                rows = cursor.fetchall()
+                
+                results = []
+                for row in rows:
+                    row_dict = {}
+                    for idx, col in enumerate(cols):
+                        value = row[idx]
+                        if isinstance(value, Decimal):
+                            value = float(value)
+                        # Convertir datetime.time a string
+                        elif hasattr(value, 'strftime'):
+                            value = value.strftime('%H:%M:%S')
+                        row_dict[col] = value
+                    results.append(row_dict)
+                
+                return results
+                
+        except Exception as e:
+            logger.error(f"Error obteniendo volumen tanque {codigo_tanque}: {str(e)}")
+            print(f"Error: {e}")
+            return []
     def get_consolidado_tanques(self, servidor, base_datos, codigo_estacion, from_date, until_date):
         """
         Obtiene reporte consolidado de máximos y mínimos de todos los tanques de una estación

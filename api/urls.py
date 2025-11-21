@@ -22,6 +22,8 @@ from .TG_php.views import (
     volumen_tanque,
     tanques_estacion,
     tanques_consolidado,
+    resumen_movimientos_tanques,
+    volumen_date
 )
 from .XmlCre.views import xmlCre
 
@@ -50,7 +52,9 @@ urlpatterns = [
     path('inventarios/detalles/',  inventarios_detalles_distribuido),
     path('tanques/estacion/', tanques_estacion),
     path('tanques/volumen/', volumen_tanque),
+    path('tanques/volumen_date/', volumen_date),
     path('tanques/consolidado/', tanques_consolidado),
+    path('resumen_movimientos_tanques/', resumen_movimientos_tanques),
 
 
 ]

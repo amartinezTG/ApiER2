@@ -542,6 +542,70 @@ def volumen_tanque(request):
             {"detail": f"Error interno: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+    
+
+@api_view(['POST'])
+def volumen_date(request):
+    """
+    Obtiene el historial de volumen de un tanque
+    """
+    print("INICIANDO volumen_tanque")
+    
+    try:
+        codgas = request.data.get('codgas')
+        codtan = request.data.get('codtan')
+        from_date = request.data.get('from_date')
+        until_date = request.data.get('until_date')
+        
+        if not all([codgas, codtan]):
+            return Response(
+                {"detail": "Los parámetros 'codgas' y 'codtan' son requeridos"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        print(f"Consultando volumen - Estación: {codgas}, Tanque: {codtan}")
+        
+        # Obtener información de la estación
+        estacion_despachos = EstacionDespachos()
+        estaciones = estacion_despachos.estaciones()
+        estacion = next((est for est in estaciones if est["Codigo"] == int(codgas)), None)
+        
+        if not estacion:
+            return Response(
+                {"detail": f"No se encontró la estación con código {codgas}"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        inventarios_model = InventariosEstaciones()
+        resultados = inventarios_model.get_volumen_date_tanque(
+            estacion["Servidor"],
+            estacion["BaseDatos"],
+            int(codgas),
+            int(codtan),
+            int(from_date),
+            int(until_date)
+        )
+        
+        if not resultados:
+            return Response(
+                {"detail": "No se encontraron resultados"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        print(f"✓ Registros encontrados: {len(resultados)}")
+        
+        return Response({
+            "Estacion": estacion["Codigo"],
+            "Nombre": estacion["Nombre"],
+            "Resultados": resultados
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        print(f"Error en volumen_tanque: {str(e)}")
+        return Response(
+            {"detail": f"Error interno: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 @api_view(['POST'])
 def tanques_consolidado(request):
@@ -630,5 +694,110 @@ def tanques_consolidado(request):
         print(f"Error general en tanques_consolidado: {str(e)}")
         return Response(
             {"detail": f"Error interno: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+    
+
+
+@api_view(['GET', 'POST'])
+def resumen_movimientos_tanques(request):
+    """
+    Endpoint para obtener resumen de movimientos de tanques con información de facturas
+    """
+    # Obtener parámetros
+    from_date = request.data.get('from')
+    until_date = request.data.get('until')
+    codgas = request.data.get('codgas')
+    proveedor = request.data.get('proveedor')
+    company = request.data.get('company')
+
+    # Validación de parámetros requeridos
+    if not all([from_date, until_date]):
+        return Response(
+            {"detail": "Faltan parámetros requeridos: from y until son obligatorios"}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        # Instanciar clases
+        documentos_estaciones = DocumentosEstaciones()
+        estacion_despachos = EstacionDespachos()
+        
+        # Obtener lista de estaciones
+        estaciones = estacion_despachos.estaciones()
+        
+        # Convertir a enteros para comparaciones
+        company_int = int(company or 0)
+        codgas_int = int(codgas or 0)
+        
+        # Filtrar estaciones según criterios
+        estaciones_filtradas = []
+        
+        if company_int == 0 and codgas_int == 0:
+            # Todas las estaciones
+            estaciones_filtradas = estaciones
+        elif company_int == 0 and codgas_int != 0:
+            # Solo la estación específica
+            estaciones_filtradas = [e for e in estaciones if e["Codigo"] == codgas_int]
+        elif company_int != 0 and codgas_int == 0:
+            # Todas las estaciones de la empresa
+            estaciones_filtradas = [e for e in estaciones if e.get("codemp") == company_int]
+        else:
+            # Empresa y estación específicas
+            estaciones_por_empresa = [e for e in estaciones if e.get("codemp") == company_int]
+            estaciones_filtradas = [e for e in estaciones_por_empresa if e["Codigo"] == codgas_int]
+
+        if not estaciones_filtradas:
+            return Response(
+                {"detail": "No se encontraron estaciones con los criterios especificados"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Procesar en paralelo con ThreadPoolExecutor
+        resultados = []
+        
+        with ThreadPoolExecutor(max_workers=40) as executor:
+            # Crear un diccionario de futures
+            future_to_est = {
+                executor.submit(
+                    documentos_estaciones.get_resumen_movimientos_tanques,
+                    est["Servidor"],
+                    est["BaseDatos"],
+                    est["Codigo"],
+                    from_date,
+                    until_date,
+                    proveedor
+                ): est
+                for est in estaciones_filtradas
+            }
+
+            # Recopilar resultados a medida que se completen
+            for future in as_completed(future_to_est):
+                est = future_to_est[future]
+                try:
+                    res = future.result()
+                    if res:
+                        resultados.extend(res)
+                except Exception as exc:
+                    print(f"Error procesando estación {est['Codigo']}: {exc}")
+                    # Continuar con las demás estaciones
+
+        if not resultados:
+            return Response(
+                {"detail": "No se encontraron movimientos de tanques en el periodo especificado"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Ordenar resultados por fecha y hora
+        resultados_ordenados = sorted(
+            resultados, 
+            key=lambda x: (x.get('fecha', ''), x.get('hora_formateada', ''))
+        )
+
+        return Response(resultados_ordenados, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response(
+            {"detail": f"Error interno del servidor: {str(e)}"}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
