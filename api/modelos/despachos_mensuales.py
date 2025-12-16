@@ -80,7 +80,7 @@ class DespachosMensuales:
         ORDER BY codprd;
 
         """
-        
+
         try:
             with pyodbc.connect(self.conn_str) as conn:
                 cursor = conn.cursor()

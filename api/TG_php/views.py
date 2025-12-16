@@ -6,10 +6,12 @@ from django.http import HttpResponse
 from api.modelos.estaciones_despachos import EstacionDespachos
 from api.modelos.Documentos_estaciones import DocumentosEstaciones
 from api.modelos.inventarios_estaciones import InventariosEstaciones
-
+from api.modelos.Facturas_Recibidas import FacturasRecibidas
+import logging
 from collections import defaultdict
 import json
 
+logger = logging.getLogger(__name__)
 
 
 @api_view(['GET', 'POST'])
@@ -799,5 +801,108 @@ def resumen_movimientos_tanques(request):
     except Exception as e:
         return Response(
             {"detail": f"Error interno del servidor: {str(e)}"}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+    
+
+
+
+@api_view(['GET', 'POST'])
+def compras_facturas_base(request):
+    """
+    Endpoint base para reporte de compras - parte desde FacturasRecibidas
+    """
+    from_date = request.data.get('from')
+    until_date = request.data.get('until')
+    codgas = request.data.get('codgas', '0')
+    proveedor = request.data.get('proveedor', '0')
+    company = request.data.get('company', '0')
+    
+    from_date =  from_date + ' 00:00:01'
+    until_date = until_date + ' 23:59:59'
+
+    if not all([from_date, until_date]):
+        return Response(
+            {"detail": "Faltan parámetros requeridos: from y until"}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        # Usar la clase modelo
+        facturas_model = FacturasRecibidas()
+        resultados = facturas_model.obtener_facturas_base(
+            from_date=from_date,
+            until_date=until_date,
+            codgas=codgas,
+            proveedor=proveedor,
+            company=company
+        )
+        
+        logger.info(f"Compras facturas base: {len(resultados)} registros obtenidos")
+        return Response(resultados, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error en compras_facturas_base: {str(e)}", exc_info=True)
+        return Response(
+            {"detail": f"Error al obtener facturas: {str(e)}"}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+def factura_detalle(request, factura_id):
+    """
+    Endpoint para obtener el detalle completo de una factura.
+    """
+    try:
+        facturas_model = FacturasRecibidas()
+        detalle = facturas_model.obtener_factura_detalle(factura_id)
+        
+        if not detalle:
+            return Response(
+                {"detail": "Factura no encontrada"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        return Response(detalle, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error en factura_detalle: {str(e)}", exc_info=True)
+        return Response(
+            {"detail": f"Error al obtener detalle: {str(e)}"}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+def compras_estadisticas(request):
+    """
+    Endpoint para obtener estadísticas de compras.
+    """
+    from_date = request.data.get('from')
+    until_date = request.data.get('until')
+
+    if not all([from_date, until_date]):
+        return Response(
+            {"detail": "Faltan parámetros requeridos: from y until"}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        facturas_model = FacturasRecibidas()
+        estadisticas = facturas_model.obtener_estadisticas(
+            from_date=from_date,
+            until_date=until_date,
+            codgas=request.data.get('codgas', '0'),
+            proveedor=request.data.get('proveedor', '0'),
+            company=request.data.get('company', '0')
+        )
+        
+        return Response(estadisticas, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error en compras_estadisticas: {str(e)}", exc_info=True)
+        return Response(
+            {"detail": f"Error al obtener estadísticas: {str(e)}"}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
