@@ -259,15 +259,6 @@ def estacion_documentos_compra(request):
         # Si ambos son específicos, filtrar por company primero y luego por codgas
         estaciones_por_empresa = [e for e in estaciones if e.get("codemp") == company_int]
         estaciones_filtradas = [e for e in estaciones_por_empresa if e["Codigo"] == codgas_int]
-
-    # estaciones_filtradas = estaciones if int(codgas)==0 else [e for e in estaciones if e["Codigo"]==int(codgas)]
-    # resultados = documentos_estaciones.get_purchase_from_station(
-    #     estaciones_filtradas[0]["Servidor"],
-    #     estaciones_filtradas[0]["BaseDatos"],
-    #     estaciones_filtradas[0]["Codigo"],
-    #     from_date,
-    #     until_date
-    # )
     resultados = []
     with ThreadPoolExecutor(max_workers=40) as executor:
         future_to_est = {

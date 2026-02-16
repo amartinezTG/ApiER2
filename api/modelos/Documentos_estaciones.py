@@ -45,6 +45,7 @@ class DocumentosEstaciones:
                     WHEN t3.den IN ('   Diesel Automotriz','Diesel Automotriz') THEN 'Diesel'
                 END AS producto,
                 t4.den as [proveedor],
+                t4.cod as [proveedor_codigo],
                 t8.volrec,
                 t2.can,
                 t2.pre,
@@ -58,7 +59,8 @@ class DocumentosEstaciones:
                 ((t2.mto + (isnull(t2.mtoiva,0) + isnull(t5.mto,0)) + isnull(t6.mto,0)+isnull(t7.mto,0))/100) as [total_fac],
                 t1.satuid,
                 t1.codgas,
-                t9.abr as [gasolinera]
+                t9.abr as [gasolinera],
+                t9.codemp as [codigo_empresa]
             FROM [{short_db}].[dbo].DocumentosC t1
             LEFT JOIN [{short_db}].[dbo].Documentos t2 ON t1.nro =t2.nro and t1.codgas = t2.codgas and t2.codcpt in(1,2,3)
             LEFT JOIN [{short_db}].[dbo].Documentos t5 ON t1.nro =t5.nro and t1.codgas = t5.codgas and t5.codcpt in(21,22,23)
@@ -71,6 +73,7 @@ class DocumentosEstaciones:
             WHERE 
                 t1.tip = 1 
                 AND t1.subope = 2 
+                and t4.cod !=55  -- Excluir proveedor Petrotal
                 AND t1.fch BETWEEN '{from_date}' AND '{until_date}'
                 {proveedor_filter}
             order by t1.nro asc
@@ -90,12 +93,17 @@ class DocumentosEstaciones:
                 CASE 
                     WHEN local.uuid IS NOT NULL THEN 1
                     ELSE 0
-                END as en_orden_pago
+                END as en_orden_pago,
+                t3.dias_credito,
+                DATEADD(
+                    DAY,
+                    ISNULL(t3.dias_credito, 0),
+                    CONVERT(date, remote.fecha, 23)
+                ) AS fecha_vencimiento_credito
             FROM OPENQUERY([{linked_server}], '{inner_query}') remote
-            LEFT JOIN [TG].[dbo].[payment_request_invoices] local 
-                ON remote.satuid = local.uuid
+            LEFT JOIN [TG].[dbo].[payment_request_invoices] local ON remote.satuid = local.uuid
+            LEFT JOIN [TG].dbo.Proveedores t3 on t3.id_control_gas = remote.proveedor_codigo
         """
-        
         try:
             with pyodbc.connect(self.conn_str) as conn:
                 cursor = conn.cursor()
