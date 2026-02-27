@@ -81,7 +81,7 @@ class DocumentosEstaciones:
 
         # Quita los saltos de línea y reemplaza comillas simples dobles
         inner_query = inner_query.replace("'", "''")
-        
+
         # ← AQUÍ ESTÁ LA MAGIA: JOIN DESPUÉS DEL OPENQUERY
         sql = f"""
             SELECT 
@@ -115,76 +115,6 @@ class DocumentosEstaciones:
             print(f"Error ejecutando documentos estaciones para {codgas}: {e}")
             return []
 
-    # def get_resumen_movimientos_tanques(self, linked_server, short_db, codgas, from_date, until_date, proveedor):
-    #     """
-    #     Obtiene el resumen de movimientos de tanques con información de facturas
-    #     """
-    #     # Filtro de proveedor opcional
-    #     prov = int(proveedor or 0)
-    #     proveedor_filter = f" AND t7.cod = {prov}" if prov != 0 else ""
-    #     estacion_expr = "STUFF(t5.abr, 1, CHARINDEX(' ', t5.abr), '') AS [estacion]"
-
-    #     # Consulta SQL
-    #     inner_query = f"""
-    #         SELECT
-    #             CONVERT(VARCHAR(10), DATEADD(day, -1, t1.fchtrn), 23) as fecha,
-    #             CAST(CONVERT(TIME, DATEADD(MINUTE, t1.hratrn % 100, DATEADD(HOUR, t1.hratrn / 100, 0))) AS TIME(0)) AS hora_formateada,
-    #             t1.nrotrn,
-    #             t3.volrec as recaudado,
-    #             t4.volrec as fac_rec,
-    #             t4.nrodoc as nro_fac,
-    #             t2.capmax,
-    #             t2.den as combustible,
-    #             {estacion_expr},
-    #             t5.cveest as numero_estacion,
-    #             t2.graprd,
-    #             t6.satuid as uuid,
-    #             t7.den as proveedor_controlgas,
-    #             t8.monto as monto_factura_controlgas,
-    #             t8.cantidad as cantidad_factura_controlgas,
-    #             t8.precio as precio_factura_controlgas
-    #         FROM [{short_db}].[dbo].MovimientosTan AS t1
-    #         LEFT JOIN [{short_db}].[dbo].Tanques AS t2 ON t1.codtan = t2.cod
-    #         LEFT JOIN [{short_db}].[dbo].MovimientosTan AS t3 on t1.nrotrn = t3.nrotrn and t3.tiptrn = 3
-    #         LEFT JOIN [{short_db}].[dbo].MovimientosTan AS t4 on t1.nrotrn = t4.nrotrn and t4.tiptrn = 4 and t4.volrec != 0
-    #         LEFT JOIN [{short_db}].[dbo].Gasolineras t5 on t1.codgas = t5.cod
-    #         LEFT JOIN [{short_db}].[dbo].DocumentosC t6 on t4.nrodoc = t6.nro and tip = 1 and t6.codgas = t1.codgas
-    #         LEFT JOIN [{short_db}].[dbo].Proveedores t7 on t6.codopr = t7.cod
-    #         LEFT JOIN (
-    #             SELECT 
-    #                 nro,
-    #                 codgas,
-    #                 SUM(mto) / 100 AS monto,
-    #                 SUM(can) AS cantidad,
-    #                 SUM(pre) as precio
-    #             FROM [{short_db}].[dbo].Documentos
-    #             WHERE tip = 1
-    #             GROUP BY codgas, nro
-    #         ) t8 ON t8.nro = t4.nrodoc AND t8.codgas = t1.codgas
-    #         WHERE 
-    #             t1.tiptrn in (2)
-    #             AND t1.fchtrn BETWEEN '{from_date}' AND '{until_date}'
-    #             {proveedor_filter}
-    #         ORDER BY fecha ASC, hora_formateada ASC
-    #     """
-
-    #     # Sanitizar comillas simples
-    #     inner_query = inner_query.replace("'", "''")
-    #     sql = f"SELECT * FROM OPENQUERY([{linked_server}], '{inner_query}')"
-        
-    #     try:
-    #         with pyodbc.connect(self.conn_str) as conn:
-    #             cursor = conn.cursor()
-    #             cursor.execute(sql)
-    #             cols = [col[0] for col in cursor.description]
-    #             rows = cursor.fetchall()
-            
-    #         # Convertir a lista de diccionarios
-    #         return [dict(zip(cols, row)) for row in rows]
-            
-    #     except Exception as e:
-    #         print(f"Error ejecutando consulta para estación {codgas}: {e}")
-    #         return []
 
     def get_resumen_movimientos_tanques(self, linked_server, short_db, codgas, from_date, until_date, proveedor):
         """
@@ -244,14 +174,14 @@ class DocumentosEstaciones:
         sql = f"""
             SELECT 
                 movimientos.*,
-                
+
                 -- INFORMACIÓN DE LA RELACIÓN
                 fmt.Id as relacion_id,
                 fmt.TipoOperacion as tipo_operacion,
                 fmt.FechaAsignacion as fecha_asignacion,
                 fmt.UsuarioAsignacion as usuario_asignacion,
                 fmt.Observaciones as observaciones,
-                
+
                 -- FACTURA PROVEEDOR ORIGINAL
                 fmt.FacturaProveedorId as factura_proveedor_id,
                 fmt.UUIDProveedor as uuid_proveedor,
@@ -312,12 +242,169 @@ class DocumentosEstaciones:
                 cursor.execute(sql)
                 cols = [col[0] for col in cursor.description]
                 rows = cursor.fetchall()
+
+            return [dict(zip(cols, row)) for row in rows]
+
+        except Exception as e:
+            print(f"Error ejecutando consulta para estación {codgas}: {e}")
+            return []
+
+
+    def get_resumen_recepciones_combustible(self, linked_server, short_db, codgas, from_date, until_date, proveedor):
+        """
+        Obtiene el resumen de movimientos de tanques con información de facturas (directo e indirecto)
+        """
+        prov = int(proveedor or 0)
+        proveedor_filter = f" AND t7.cod = {prov}" if prov != 0 else ""
+        estacion_expr = "STUFF(t5.abr, 1, CHARINDEX(' ', t5.abr), '') AS [estacion]"
+
+        inner_query = f"""
+            SELECT
+                CONVERT(VARCHAR(10), DATEADD(day, -1, t1.fchtrn), 23) as fecha,
+                CAST(CONVERT(TIME, DATEADD(MINUTE, t1.hratrn % 100, DATEADD(HOUR, t1.hratrn / 100, 0))) AS TIME(0)) AS hora_formateada,
+                t1.nrotrn,
+                t1.codgas,
+                t1.codgas as codgas_interno,
+                t3.volrec as recaudado,
+                t4.volrec as fac_rec,
+                t4.nrodoc as nro_fac,
+                t2.capmax,
+                t2.den as combustible,
+                {estacion_expr},
+                t5.cveest as numero_estacion,
+                t2.graprd,
+                t6.satuid as uuid_original,
+                CASE 
+                    WHEN CHARINDEX('@F:', CAST(t6.txtref AS VARCHAR(MAX))) > 0 THEN
+                        SUBSTRING(
+                            CAST(t6.txtref AS VARCHAR(MAX)),
+                            CHARINDEX('@F:', CAST(t6.txtref AS VARCHAR(MAX))) + 3,
+                            CHARINDEX('@', CAST(t6.txtref AS VARCHAR(MAX)) + '@', CHARINDEX('@F:', CAST(t6.txtref AS VARCHAR(MAX))) + 3)
+                            - (CHARINDEX('@F:', CAST(t6.txtref AS VARCHAR(MAX))) + 3)
+                        )
+                    ELSE NULL
+                END AS Factura,
+                CASE 
+                    WHEN CHARINDEX('@R:', CAST(t6.txtref AS VARCHAR(MAX))) > 0 THEN
+                        SUBSTRING(
+                            CAST(t6.txtref AS VARCHAR(MAX)),
+                            CHARINDEX('@R:', CAST(t6.txtref AS VARCHAR(MAX))) + 3,
+                            CHARINDEX('@',
+                                CAST(t6.txtref AS VARCHAR(MAX)) + '@',
+                                CHARINDEX('@R:', CAST(t6.txtref AS VARCHAR(MAX))) + 3
+                            )
+                            - (CHARINDEX('@R:', CAST(t6.txtref AS VARCHAR(MAX))) + 3)
+                        )
+                    ELSE NULL
+                END AS Remision,
+                t7.den as proveedor_controlgas,
+                t8.monto as monto_factura_controlgas,
+                t8.cantidad as cantidad_factura_controlgas,
+                t8.precio as precio_factura_controlgas
+            FROM [{short_db}].[dbo].MovimientosTan AS t1
+            LEFT JOIN [{short_db}].[dbo].Tanques AS t2 ON t1.codtan = t2.cod
+            LEFT JOIN [{short_db}].[dbo].MovimientosTan AS t3 on t1.nrotrn = t3.nrotrn and t3.tiptrn = 3
+            LEFT JOIN [{short_db}].[dbo].MovimientosTan AS t4 on t1.nrotrn = t4.nrotrn and t4.tiptrn = 4 and t4.volrec != 0
+            LEFT JOIN [{short_db}].[dbo].Gasolineras t5 on t1.codgas = t5.cod
+            LEFT JOIN [{short_db}].[dbo].DocumentosC t6 on t4.nrodoc = t6.nro and tip = 1 and t6.codgas = t1.codgas
+            LEFT JOIN [{short_db}].[dbo].Proveedores t7 on t6.codopr = t7.cod
+            LEFT JOIN (
+                SELECT 
+                    nro, codgas,
+                    SUM(mto) / 100 AS monto,
+                    SUM(can) AS cantidad,
+                    SUM(pre) as precio
+                FROM [{short_db}].[dbo].Documentos
+                WHERE tip = 1
+                GROUP BY codgas, nro
+            ) t8 ON t8.nro = t4.nrodoc AND t8.codgas = t1.codgas
+            WHERE 
+                t1.tiptrn in (2)
+                AND t1.fchtrn BETWEEN '{from_date}' AND '{until_date}'
+                {proveedor_filter}
+            ORDER BY fecha ASC, hora_formateada ASC
+        """
+
+        inner_query = inner_query.replace("'", "''")
+        # JOIN con las DOS posibles facturas
+        sql = f"""
+            SELECT 
+                movimientos.*,
+                -- Facturas Recibidas
+                fr.folio,fr.Fecha,fr.SubTotal,fr.Total,fr.EmisorNombre, fr.ReceptorNombre, fr.FechaTimbrado,fr.Destino,fr.RutaArchivo,fr.NombreArchivo,
+                frc.Cantidad,frc.Descripcion,frc.ValorUnitario,frc.Importe,frc.NoIdentificacion,
+                -- INFORMACIÓN DE LA RELACIÓN
+                fmt.Id as relacion_id,
+                fmt.TipoOperacion as tipo_operacion,
+                fmt.FechaAsignacion as fecha_asignacion,
+                fmt.UsuarioAsignacion as usuario_asignacion,
+                fmt.Observaciones as observaciones,
+
+                -- FACTURA PROVEEDOR ORIGINAL
+                fmt.FacturaProveedorId as factura_proveedor_id,
+                fmt.UUIDProveedor as uuid_proveedor,
+                fmt.FolioProveedor as folio_proveedor,
+                fmt.MontoProveedor as monto_proveedor,
+                fmt.LitrosProveedor as litros_proveedor,
+                fmt.PrecioProveedor as precio_proveedor,
+                frProv.Fecha as fecha_factura_proveedor,
+                frProv.EmisorNombre as emisor_factura_proveedor,
+                frProv.Total as total_factura_proveedor,
+                frProv.Destino as destino_factura_proveedor,
+                frProv.Remision as remision_factura_proveedor,
+                -- FACTURA PETROTAL (puede ser NULL)
+                fmt.FacturaPetrotalId as factura_petrotal_id,
+                fmt.UUIDPetrotal as uuid_petrotal,
+                fmt.FolioPetrotal as folio_petrotal,
+                fmt.MontoPetrotal as monto_petrotal,
+                fmt.LitrosPetrotal as litros_petrotal,
+                fmt.PrecioPetrotal as precio_petrotal,
+                frPetro.Fecha as fecha_factura_petrotal,
+                frPetro.EmisorNombre as emisor_factura_petrotal,
+                frPetro.Total as total_factura_petrotal,
+                frPetro.Destino as destino_factura_petrotal,
+                frPetro.Remision as remision_factura_petrotal,
+
+                -- FLAGS
+                CASE 
+                    WHEN fmt.Id IS NOT NULL THEN 1 
+                    ELSE 0 
+                END as tiene_facturas_asignadas,
+
+                CASE 
+                    WHEN fmt.TipoOperacion = 2 THEN 1
+                    ELSE 0
+                END as es_operacion_petrotal,
+                -- CÁLCULOS AUTOMÁTICOS (diferencias, márgenes)
+                CASE 
+                    WHEN fmt.TipoOperacion = 2 
+                    THEN fmt.PrecioPetrotal - fmt.PrecioProveedor
+                    ELSE NULL
+                END as diferencia_precio,
+                CASE 
+                    WHEN fmt.TipoOperacion = 2 AND fmt.PrecioProveedor > 0
+                    THEN ((fmt.PrecioPetrotal - fmt.PrecioProveedor) / fmt.PrecioProveedor) * 100
+                    ELSE NULL
+                END as margen_porcentual
+            FROM OPENQUERY([{linked_server}], '{inner_query}') as movimientos
+            LEFT JOIN [TG].[dbo].[FacturasMovimientosTanques] fmt ON movimientos.nrotrn = fmt.nrotrn AND movimientos.codgas = fmt.codgas AND fmt.Activo = 1
+            LEFT JOIN [TG].[dbo].[FacturasRecibidas] frProv ON fmt.FacturaProveedorId = frProv.Id
+            LEFT JOIN [TG].[dbo].[FacturasRecibidas] frPetro ON fmt.FacturaPetrotalId = frPetro.Id
+            LEFT JOIN [TG].dbo.FacturasRecibidas fr on movimientos.uuid_original = fr.UUID
+            LEFT JOIN [TG].dbo.FacturasRecibidasConceptos frc on fr.Id = frc.FacturaId
+        """
+        
+        try:
+            with pyodbc.connect(self.conn_str) as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql)
+                cols = [col[0] for col in cursor.description]
+                rows = cursor.fetchall()
             
             return [dict(zip(cols, row)) for row in rows]
             
         except Exception as e:
             print(f"Error ejecutando consulta para estación {codgas}: {e}")
             return []
-        
 
     
