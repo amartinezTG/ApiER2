@@ -283,7 +283,7 @@ class DocumentosEstaciones:
                             - (CHARINDEX('@F:', CAST(t6.txtref AS VARCHAR(MAX))) + 3)
                         )
                     ELSE NULL
-                END AS Factura,
+                END AS factura_proveedor,
                 CASE 
                     WHEN CHARINDEX('@R:', CAST(t6.txtref AS VARCHAR(MAX))) > 0 THEN
                         SUBSTRING(
@@ -331,6 +331,7 @@ class DocumentosEstaciones:
             SELECT 
                 movimientos.*,
                 -- Facturas Recibidas
+                fr.Id as factura_recibida_id,fr.RutaArchivo,
                 fr.folio,fr.Fecha,fr.SubTotal,fr.Total,fr.EmisorNombre, fr.ReceptorNombre, fr.FechaTimbrado,fr.Destino,fr.RutaArchivo,fr.NombreArchivo,
                 frc.Cantidad,frc.Descripcion,frc.ValorUnitario,frc.Importe,frc.NoIdentificacion,
                 -- INFORMACIÓN DE LA RELACIÓN
