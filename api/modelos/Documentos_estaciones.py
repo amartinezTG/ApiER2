@@ -171,7 +171,8 @@ class DocumentosEstaciones:
                 t1.satuid,
                 t1.codgas,
                 t9.abr as [gasolinera],
-                t9.codemp as [codigo_empresa]
+                t9.codemp as [codigo_empresa],
+                t4.rfc as [rfc] 
             FROM [{short_db}].[dbo].DocumentosC t1
             LEFT JOIN [{short_db}].[dbo].Documentos t2 ON t1.nro =t2.nro and t1.codgas = t2.codgas and t2.codcpt in(1,2,3)
             LEFT JOIN [{short_db}].[dbo].Documentos t5 ON t1.nro =t5.nro and t1.codgas = t5.codgas and t5.codcpt in(21,22,23)
@@ -181,9 +182,9 @@ class DocumentosEstaciones:
             LEFT JOIN [{short_db}].[dbo].Proveedores t4 on t1.codopr =t4.cod
             LEFT JOIN [{short_db}].[dbo].Gasolineras t9 on t1.codgas =t9.cod
             LEFT JOIN (SELECT sum(volrec) as volrec, nrodoc FROM [{short_db}].[dbo].[MovimientosTan] where tiptrn = 4 group by nrodoc) t8 on t1.nro = t8.nrodoc
-            WHERE 
-                t1.tip = 1 
-                AND t1.subope = 2 
+            WHERE
+                t1.tip = 1
+                AND t1.subope = 2
                 AND t1.fch BETWEEN '{from_date}' AND '{until_date}'
                 {proveedor_filter}
             order by t1.nro asc
