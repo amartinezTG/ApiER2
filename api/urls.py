@@ -17,6 +17,7 @@ from .TG_php.views import (
     estacion_despachos_facturados_porcentaje,
     estacion_comparacion_series,
     estacion_documentos_compra,
+    analisis_de_compras,
     inventarios_distribuido,
     inventarios_detalles_distribuido,
     volumen_tanque,
@@ -50,6 +51,7 @@ urlpatterns = [
     path('estacion_comparacion_series/', estacion_comparacion_series),
     #documentos
     path('estacion_documentos_compra/', estacion_documentos_compra),
+    path('analisis_de_compras/', analisis_de_compras),
     # Rutas para XmlCre
     path('xmlCre/', xmlCre),
     path('inventarios/', inventarios_distribuido),

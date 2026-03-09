@@ -282,6 +282,67 @@ def estacion_documentos_compra(request):
     return Response(resultados, status=status.HTTP_200_OK)
 
 
+@api_view(['GET', 'POST'])
+def analisis_de_compras(request):
+    from_date = request.data.get('from')
+    until_date = request.data.get('until')
+    codgas = request.data.get('codgas')
+    proveedor = request.data.get('proveedor')
+    company = request.data.get('company')
+    if not all([from_date, until_date, codgas, proveedor, company]):
+        return Response({"detail": "Faltan parámetros requeridos"}, status=status.HTTP_400_BAD_REQUEST)
+
+    # debug = [from_date, until_date, codgas, proveedor, company]
+    # return Response(debug , status=status.HTTP_200_OK)
+
+    documentos_estaciones = DocumentosEstaciones()
+    estacion_despachos = EstacionDespachos()
+    estaciones = estacion_despachos.estaciones()
+    estaciones_filtradas = []
+
+    # Convertir a enteros para comparaciones
+    company_int = int(company)
+    codgas_int = int(codgas)
+    if company_int == 0 and codgas_int == 0:
+        estaciones_filtradas = estaciones
+    elif  company_int == 0 and codgas_int != 0:
+        # Si company=0 pero codgas específico, filtrar solo por codgas
+        estaciones_filtradas = [e for e in estaciones if e["Codigo"] == codgas_int]
+
+    elif company_int != 0 and codgas_int == 0:
+        # Si company específico pero codgas=0, filtrar solo por company
+        estaciones_filtradas = [e for e in estaciones if e.get("codemp") == company_int]
+
+    else:
+        # Si ambos son específicos, filtrar por company primero y luego por codgas
+        estaciones_por_empresa = [e for e in estaciones if e.get("codemp") == company_int]
+        estaciones_filtradas = [e for e in estaciones_por_empresa if e["Codigo"] == codgas_int]
+    resultados = []
+    with ThreadPoolExecutor(max_workers=40) as executor:
+        future_to_est = {
+            executor.submit(
+                documentos_estaciones.analisis_de_compras, est["Servidor"], est["BaseDatos"], est["Codigo"], from_date, until_date, proveedor
+            ): est
+            for est in estaciones_filtradas
+        }
+
+        resultados = []
+        for future in as_completed(future_to_est):
+            est = future_to_est[future]  # Aquí sí corresponde correctamente
+            res = future.result()
+            if res:
+                resultados.extend(
+                     res
+                )
+
+    if not resultados:
+        return Response({"detail": "No se encontraron resultados"}, status=status.HTTP_404_NOT_FOUND)
+    return Response(resultados, status=status.HTTP_200_OK)
+
+
+
+
+
 
 @api_view(['POST'])
 def inventarios_distribuido(request):
