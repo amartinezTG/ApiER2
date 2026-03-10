@@ -218,7 +218,43 @@ class DocumentosEstaciones:
 
         sql = f"""
             SELECT 
-                remote.*,
+                remote.nro,
+                t4.nro AS nro_corp,
+                remote.Factura,
+                CASE 
+                    WHEN CHARINDEX('@F:', CAST(t4.txtref AS VARCHAR(MAX))) > 0 THEN
+                        SUBSTRING(
+                            CAST(t4.txtref AS VARCHAR(MAX)),
+                            CHARINDEX('@F:', CAST(t4.txtref AS VARCHAR(MAX))) + 3,
+                            CHARINDEX('@', CAST(t4.txtref AS VARCHAR(MAX)) + '@', CHARINDEX('@F:', CAST(t4.txtref AS VARCHAR(MAX))) + 3)
+                            - (CHARINDEX('@F:', CAST(t4.txtref AS VARCHAR(MAX))) + 3)
+                        )
+                    ELSE NULL
+                END COLLATE Modern_Spanish_CI_AS AS Factura_corpo,
+                remote.proveedor,
+                t5.den AS proveedor_corpo,
+                t4.satuid as uuid_corp,
+                remote.Remision,
+                remote.fecha,
+                remote.fechaVto,
+                remote.producto,
+                remote.proveedor_codigo,
+                remote.volrec,
+                remote.can,
+                remote.pre,
+                remote.mto,
+                remote.mtoiie,
+                remote.iva8,
+                remote.iva,
+                remote.iva_total,
+                remote.servicio,
+                remote.iva_servicio,
+                remote.total_fac,
+                remote.satuid,
+                remote.codgas,
+                remote.gasolinera,
+                remote.codigo_empresa,
+                remote.rfc,
                 local.id AS payment_invoice_id,
                 local.payment_request_id,
                 local.status AS payment_status,
@@ -236,7 +272,10 @@ class DocumentosEstaciones:
                 fr.Id AS factura_recibida_id,
                 fr.EmisorNombre,
                 fr.RutaArchivo,
-                fr.NombreArchivo
+                fr.NombreArchivo,
+                t4.codopr,
+                t4.satuid AS satuid_corp,
+                t4.nro AS nro_corp_2
             FROM OPENQUERY([{linked_server}], '{inner_query}') remote
             LEFT JOIN [TG].[dbo].[payment_request_invoices] local 
                 ON remote.satuid = local.uuid COLLATE Modern_Spanish_CI_AS
@@ -244,6 +283,12 @@ class DocumentosEstaciones:
                 ON t3.id_control_gas = remote.proveedor_codigo
             LEFT JOIN [TG].[dbo].FacturasRecibidas fr 
                 ON remote.satuid = fr.UUID COLLATE Modern_Spanish_CI_AS
+            LEFT JOIN sg12.dbo.DocumentosC t4 
+                ON remote.codgas = t4.codgas 
+                AND remote.nro = t4.nro 
+                AND t4.tip = 1 
+            LEFT JOIN sg12.[dbo].Proveedores t5 
+                ON t4.codopr = t5.cod
         """
         try:
             with pyodbc.connect(self.conn_str) as conn:
@@ -255,8 +300,6 @@ class DocumentosEstaciones:
         except Exception as e:
             print(f"Error ejecutando documentos estaciones para {codgas}: {e}")
             return []
-
-
 
 
 
