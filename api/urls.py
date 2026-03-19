@@ -28,7 +28,8 @@ from .TG_php.views import (
     volumen_date,
     compras_facturas_base,
     factura_detalle,
-    compras_estadisticas
+    compras_estadisticas,
+    importar_factura_pdf,
 )
 from .XmlCre.views import xmlCre
 
@@ -64,6 +65,7 @@ urlpatterns = [
     path('resumen_movimientos_tanques/', resumen_movimientos_tanques),
 
     path('compras_facturas_base/', compras_facturas_base),
-    path('factura_detalle/',factura_detalle),
+    path('factura_detalle/', factura_detalle),
     path('compras_estadisticas/', compras_estadisticas),
+    path('importar_factura_pdf/', importar_factura_pdf),
 ]

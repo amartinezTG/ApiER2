@@ -1,4 +1,5 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 from rest_framework import status
 from concurrent.futures import ThreadPoolExecutor , as_completed
@@ -7,9 +8,12 @@ from api.modelos.estaciones_despachos import EstacionDespachos
 from api.modelos.Documentos_estaciones import DocumentosEstaciones
 from api.modelos.inventarios_estaciones import InventariosEstaciones
 from api.modelos.Facturas_Recibidas import FacturasRecibidas
+from api.modelos.ImportadorFacturas import ImportadorFacturas
 import logging
 from collections import defaultdict
 import json
+import tempfile
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -1060,6 +1064,157 @@ def compras_estadisticas(request):
     except Exception as e:
         logger.error(f"Error en compras_estadisticas: {str(e)}", exc_info=True)
         return Response(
-            {"detail": f"Error al obtener estadísticas: {str(e)}"}, 
+            {"detail": f"Error al obtener estadísticas: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['POST'])
+@parser_classes([MultiPartParser])
+def importar_factura_pdf(request):
+    """
+    Recibe un PDF de factura y lo importa a TG.dbo.FacturasRecibidas.
+
+    Input (multipart/form-data):
+        pdf      : archivo PDF
+        proveedor: 'lobo' | 'mcg' | 'tesoro' | 'aemsa' | 'enerey' | 'essafuel' | 'premiergas' | 'petrotal'
+
+    Output:
+        {
+            "estado": "exitosa" | "duplicada" | "cancelada" | "nota_credito" | "complemento_pago" | "error",
+            "factura_id": int | null,
+            "uuid": str,
+            "proveedor": str,
+            "conceptos_insertados": int,
+            "mensaje": str
+        }
+    """
+    from api.pdf_extractors.extractors import extraer_datos_pdf
+    from api.pdf_extractors.conceptos import (
+        extraer_conceptos_lobo, extraer_conceptos_mcg, extraer_conceptos_tesoro,
+        extraer_conceptos_aemsa, extraer_conceptos_enerey, extraer_conceptos_essafuel,
+        extraer_conceptos_premiergas, extraer_conceptos_petrotal,
+    )
+
+    PROVEEDORES_VALIDOS = {'lobo', 'mcg', 'tesoro', 'aemsa', 'enerey', 'essafuel', 'premiergas', 'petrotal'}
+    EXTRACTORES_CONCEPTOS = {
+        'lobo': extraer_conceptos_lobo,
+        'mcg': extraer_conceptos_mcg,
+        'tesoro': extraer_conceptos_tesoro,
+        'aemsa': extraer_conceptos_aemsa,
+        'enerey': extraer_conceptos_enerey,
+        'essafuel': extraer_conceptos_essafuel,
+        'premiergas': extraer_conceptos_premiergas,
+        'petrotal': extraer_conceptos_petrotal,
+    }
+
+    pdf_file = request.FILES.get('pdf')
+    proveedor = (request.data.get('proveedor') or '').strip().lower()
+
+    if not pdf_file:
+        return Response({"detail": "Falta el archivo PDF."}, status=status.HTTP_400_BAD_REQUEST)
+    if proveedor not in PROVEEDORES_VALIDOS:
+        return Response(
+            {"detail": f"Proveedor inválido. Valores aceptados: {', '.join(sorted(PROVEEDORES_VALIDOS))}"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Guardar PDF en archivo temporal para poder pasarlo a PyMuPDF/pdfplumber
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+            for chunk in pdf_file.chunks():
+                tmp.write(chunk)
+            tmp_path = tmp.name
+
+        from pathlib import Path
+        pdf_path = Path(tmp_path)
+
+        # --- Extracción de datos del PDF ---
+        datos = extraer_datos_pdf(pdf_path, provider_hint=proveedor)
+
+        uuid = datos.get('UUID', '')
+
+        # --- Filtros por tipo de documento ---
+        if datos.get('__is_cancelada'):
+            return Response({
+                "estado": "cancelada",
+                "factura_id": None,
+                "uuid": uuid,
+                "proveedor": proveedor,
+                "conceptos_insertados": 0,
+                "mensaje": "Factura cancelada — no se importa."
+            }, status=status.HTTP_200_OK)
+
+        if datos.get('__is_nota_credito'):
+            return Response({
+                "estado": "nota_credito",
+                "factura_id": None,
+                "uuid": uuid,
+                "proveedor": proveedor,
+                "conceptos_insertados": 0,
+                "mensaje": "Nota de crédito detectada — no se importa como factura."
+            }, status=status.HTTP_200_OK)
+
+        if datos.get('__is_pago'):
+            return Response({
+                "estado": "complemento_pago",
+                "factura_id": None,
+                "uuid": uuid,
+                "proveedor": proveedor,
+                "conceptos_insertados": 0,
+                "mensaje": "Complemento de pago detectado — no se importa."
+            }, status=status.HTTP_200_OK)
+
+        # --- Verificar duplicado por UUID ---
+        importador = ImportadorFacturas()
+        if uuid and importador.uuid_existe(uuid):
+            return Response({
+                "estado": "duplicada",
+                "factura_id": None,
+                "uuid": uuid,
+                "proveedor": proveedor,
+                "conceptos_insertados": 0,
+                "mensaje": f"La factura con UUID {uuid} ya existe en la base de datos."
+            }, status=status.HTTP_200_OK)
+
+        # --- Extraer conceptos ---
+        conceptos = []
+        extractor_fn = EXTRACTORES_CONCEPTOS.get(proveedor)
+        if extractor_fn:
+            try:
+                conceptos = extractor_fn(pdf_path)
+            except Exception as e:
+                logger.warning(f"Error extrayendo conceptos para {proveedor}: {e}")
+
+        # --- Normalizar e insertar factura ---
+        datos['RutaArchivo'] = ''
+        datos['NombreArchivo'] = pdf_file.name
+        datos = importador.normalizar_factura(datos)
+
+        factura_id = importador.insertar_factura(datos)
+
+        # --- Insertar conceptos ---
+        conceptos_insertados = 0
+        if factura_id and conceptos:
+            conceptos_norm = [importador.normalizar_concepto(c) for c in conceptos]
+            conceptos_insertados = importador.insertar_conceptos(factura_id, conceptos_norm)
+
+        return Response({
+            "estado": "exitosa",
+            "factura_id": factura_id,
+            "uuid": uuid,
+            "proveedor": proveedor,
+            "conceptos_insertados": conceptos_insertados,
+            "mensaje": f"Factura importada correctamente. ID={factura_id}, {conceptos_insertados} concepto(s)."
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        logger.error(f"Error en importar_factura_pdf: {e}", exc_info=True)
+        return Response(
+            {"detail": f"Error al procesar el PDF: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
