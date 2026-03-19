@@ -1111,6 +1111,7 @@ def importar_factura_pdf(request):
     pdf_file = request.FILES.get('pdf')
     proveedor = (request.data.get('proveedor') or '').strip().lower()
 
+
     if not pdf_file:
         return Response({"detail": "Falta el archivo PDF."}, status=status.HTTP_400_BAD_REQUEST)
     if proveedor not in PROVEEDORES_VALIDOS:

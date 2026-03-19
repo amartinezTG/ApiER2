@@ -841,11 +841,11 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
     data["TipoDeComprobante"] = _tipo_comprobante_code(data.get("TipoDeComprobante", ""))
 
     return data
-
+ 
 
 def extraer_datos_pdf(path_pdf: Path, provider_hint: str = None) -> Dict[str, Any]:
     """Función principal para extraer datos de PDF según el proveedor detectado."""
-    from utils import detect_provider_profile
+    from api.pdf_extractors.utils import detect_provider_profile
     
     with fitz.open(str(path_pdf)) as doc:
         # Detección de proveedor
