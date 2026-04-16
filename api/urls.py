@@ -30,10 +30,11 @@ from .TG_php.views import (
     factura_detalle,
     compras_estadisticas,
     importar_factura_pdf,
+    facturas_vencen_hoy,
 )
 from .XmlCre.views import xmlCre
 
-
+  
 urlpatterns = [
     # path('concentrado-og/', concentrado_og_view),
     path('concentrado-resultados/', concentrado_resultados_view),
@@ -68,4 +69,5 @@ urlpatterns = [
     path('factura_detalle/', factura_detalle),
     path('compras_estadisticas/', compras_estadisticas),
     path('importar_factura_pdf/', importar_factura_pdf),
+    path('facturas_vencen_hoy/', facturas_vencen_hoy),
 ]

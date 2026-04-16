@@ -1,7 +1,7 @@
 import pyodbc
 from api.db_connections import CONTROLGAS_CONN_STR
 from datetime import datetime, timedelta
-
+ 
 class DocumentosEstaciones:
     def __init__(self, conn_str: str = CONTROLGAS_CONN_STR):
         self.conn_str = conn_str
@@ -208,7 +208,7 @@ class DocumentosEstaciones:
             WHERE
                 t1.tip = 1
                 AND t1.subope = 2
-                AND t4.cod != 55
+                
                 AND t1.fch BETWEEN '{from_date}' AND '{until_date}'
                 {proveedor_filter}
             ORDER BY t1.nro ASC
@@ -251,6 +251,142 @@ class DocumentosEstaciones:
             return []
 
 
+    def get_overdue_invoices(self, linked_server, short_db, codgas,
+                             from_due: str, until_due: str, proveedor: int = 0):
+        """
+        Obtiene facturas de compra vencidas (sin asignar a orden de pago) en un rango
+        de fechas de vencimiento de crédito.
+        from_due / until_due: 'YYYY-MM-DD'
+        Solo retorna facturas cuyo en_orden_pago = 0.
+        """
+        proveedor_filter = f" AND t4.cod = {proveedor}" if proveedor != 0 else ""
+
+        # La fecha interna en ControlGas se almacena como int YYYYMMDD + 1 día (fch),
+        # por lo que la fecha_emision real = DATEADD(DAY,-1,fch).
+        # El vencimiento = fecha_emision + dias_credito se calcula en el JOIN externo con TG.
+        # El OPENQUERY trae todas las facturas sin filtro de fecha para cubrir el rango pedido.
+        # El filtro por rango de vencimiento y en_orden_pago se aplica en la query externa.
+        inner_query = f"""
+            SELECT
+                t1.nro,
+                CASE
+                    WHEN CHARINDEX('@F:', CAST(t1.txtref AS VARCHAR(MAX))) > 0 THEN
+                        SUBSTRING(
+                            CAST(t1.txtref AS VARCHAR(MAX)),
+                            CHARINDEX('@F:', CAST(t1.txtref AS VARCHAR(MAX))) + 3,
+                            CHARINDEX('@', CAST(t1.txtref AS VARCHAR(MAX)) + '@', CHARINDEX('@F:', CAST(t1.txtref AS VARCHAR(MAX))) + 3)
+                            - (CHARINDEX('@F:', CAST(t1.txtref AS VARCHAR(MAX))) + 3)
+                        )
+                    ELSE NULL
+                END COLLATE Modern_Spanish_CI_AS AS Factura,
+                CASE
+                    WHEN CHARINDEX('@R:', CAST(t1.txtref AS VARCHAR(MAX))) > 0 THEN
+                        SUBSTRING(
+                            CAST(t1.txtref AS VARCHAR(MAX)),
+                            CHARINDEX('@R:', CAST(t1.txtref AS VARCHAR(MAX))) + 3,
+                            CHARINDEX('@', CAST(t1.txtref AS VARCHAR(MAX)) + '@', CHARINDEX('@R:', CAST(t1.txtref AS VARCHAR(MAX))) + 3)
+                            - (CHARINDEX('@R:', CAST(t1.txtref AS VARCHAR(MAX))) + 3)
+                        )
+                    ELSE NULL
+                END COLLATE Modern_Spanish_CI_AS AS Remision,
+                CONVERT(VARCHAR(10), DATEADD(DAY, -1, t1.fch), 23) AS fecha,
+                CONVERT(VARCHAR(10), DATEADD(DAY, -1, t1.vto), 23) AS fechaVto,
+                CASE
+                    WHEN t3.den IN (''   T-Maxima Regular'', '' Gasolina Regular Menor a 91 Octanos'') THEN ''Regular''
+                    WHEN t3.den IN (''   T-Super Premium'', '' Gasolina Premium Mayor o Igual a 91 Octanos'') THEN ''Super''
+                    WHEN t3.den IN (''   Diesel Automotriz'',''Diesel Automotriz'') THEN ''Diesel''
+                END AS producto,
+                t4.den AS proveedor,
+                t4.cod AS proveedor_codigo,
+                t4.rfc AS rfc,
+                t8.volrec,
+                d.can,
+                d.pre,
+                (d.mto / 100) AS mto,
+                (d.mtoiie / 100) AS mtoiie,
+                (d.iva8 / 100) AS iva8,
+                (d.iva / 100) AS iva,
+                ((ISNULL(d.iva8, 0) + ISNULL(d.iva, 0)) / 100) AS iva_total,
+                (d.servicio / 100) AS servicio,
+                (d.iva_servicio / 100) AS iva_servicio,
+                ((d.mto + ISNULL(d.iva8, 0) + ISNULL(d.iva, 0) + ISNULL(d.servicio, 0) + ISNULL(d.iva_servicio, 0)) / 100) AS total_fac,
+                t1.satuid,
+                t1.codgas,
+                t9.abr AS gasolinera,
+                t9.codemp AS codigo_empresa
+            FROM [{short_db}].[dbo].DocumentosC t1
+            LEFT JOIN (
+                SELECT
+                    nro, codgas,
+                    SUM(CASE WHEN codcpt IN (1,2,3)    THEN can    ELSE 0 END) AS can,
+                    SUM(CASE WHEN codcpt IN (1,2,3)    THEN pre    ELSE 0 END) AS pre,
+                    SUM(CASE WHEN codcpt IN (1,2,3)    THEN mto    ELSE 0 END) AS mto,
+                    SUM(CASE WHEN codcpt IN (1,2,3)    THEN mtoiie ELSE 0 END) AS mtoiie,
+                    SUM(CASE WHEN codcpt IN (1,2,3)    THEN mtoiva ELSE 0 END) AS iva8,
+                    SUM(CASE WHEN codcpt IN (21,22,23) THEN mto    ELSE 0 END) AS iva,
+                    SUM(CASE WHEN codcpt IN (18,19,20) THEN mto    ELSE 0 END) AS servicio,
+                    SUM(CASE WHEN codcpt IN (24,25,26) THEN mto    ELSE 0 END) AS iva_servicio,
+                    MAX(CASE WHEN codcpt IN (1,2,3)    THEN codprd END) AS codprd
+                FROM [{short_db}].[dbo].Documentos
+                WHERE tip = 1
+                AND codcpt IN (1,2,3,18,19,20,21,22,23,24,25,26)
+                GROUP BY nro, codgas
+            ) d ON t1.nro = d.nro AND t1.codgas = d.codgas
+            LEFT JOIN [{short_db}].[dbo].Productos t3 ON d.codprd = t3.cod
+            LEFT JOIN [{short_db}].[dbo].Proveedores t4 ON t1.codopr = t4.cod
+            LEFT JOIN [{short_db}].[dbo].Gasolineras t9 ON t1.codgas = t9.cod
+            LEFT JOIN (
+                SELECT SUM(volrec) AS volrec, nrodoc
+                FROM [{short_db}].[dbo].[MovimientosTan] mt
+                WHERE mt.tiptrn = 4
+                AND EXISTS (
+                    SELECT 1 FROM [{short_db}].[dbo].DocumentosC dc
+                    WHERE dc.nro = mt.nrodoc AND dc.tip = 1 AND dc.subope = 2
+                )
+                GROUP BY nrodoc
+            ) t8 ON t1.nro = t8.nrodoc
+            WHERE t1.tip = 1 AND t1.subope = 2
+            {proveedor_filter}
+        """
+
+        # El filtro por rango de vencimiento y en_orden_pago se aplica FUERA del OPENQUERY
+        # para poder usar dias_credito de TG.dbo.Proveedores
+        sql = f"""
+            SELECT
+                remote.*,
+                local_inv.id              AS payment_invoice_id,
+                local_inv.payment_request_id,
+                local_inv.status          AS payment_status,
+                local_inv.paid_amount,
+                CASE WHEN local_inv.uuid IS NOT NULL THEN 1 ELSE 0 END AS en_orden_pago,
+                t3.dias_credito,
+                CAST(
+                    DATEADD(DAY, ISNULL(t3.dias_credito, 0), CONVERT(DATE, remote.fecha, 23))
+                AS VARCHAR(10)) AS fecha_vencimiento_credito
+            FROM OPENQUERY([{linked_server}], '{inner_query}') remote
+            LEFT JOIN [TG].[dbo].[payment_request_invoices] local_inv
+                ON remote.satuid = local_inv.uuid COLLATE Modern_Spanish_CI_AS
+            LEFT JOIN [TG].[dbo].Proveedores t3
+                ON t3.id_control_gas = remote.proveedor_codigo
+            WHERE
+                CAST(
+                    DATEADD(DAY, ISNULL(t3.dias_credito, 0), CONVERT(DATE, remote.fecha, 23))
+                AS DATE) BETWEEN CAST('{from_due}' AS DATE) AND CAST('{until_due}' AS DATE)
+                AND local_inv.uuid IS NULL
+        """
+
+        try:
+            with pyodbc.connect(self.conn_str) as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql)
+                cols = [col[0] for col in cursor.description]
+                rows = cursor.fetchall()
+            return [dict(zip(cols, row)) for row in rows]
+        except Exception as e:
+            print(f"Error en get_overdue_invoices para {codgas} [{linked_server}]: {e}")
+            return []
+
+ 
     def analisis_de_compras(self, linked_server, short_db, codgas, from_date, until_date, proveedor):
         prov = int(proveedor or 0)
         proveedor_filter = f" AND t4.cod = {prov}" if prov != 0 else ""

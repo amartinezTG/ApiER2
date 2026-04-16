@@ -227,7 +227,7 @@ def estacion_comparacion_series(request):
     if not resultados:
         return Response({"detail": "No se encontraron resultados"}, status=status.HTTP_404_NOT_FOUND)
     return Response(resultados, status=status.HTTP_200_OK)
-
+ 
 @api_view(['GET', 'POST'])
 def estacion_documentos_compra(request):
     from_date = request.data.get('from')
@@ -285,6 +285,79 @@ def estacion_documentos_compra(request):
         return Response({"detail": "No se encontraron resultados"}, status=status.HTTP_404_NOT_FOUND)
     return Response(resultados, status=status.HTTP_200_OK)
 
+
+@api_view(['GET', 'POST'])
+def facturas_vencen_hoy(request):
+    """
+    Retorna facturas de compra vencidas (sin orden de pago) en un rango de fechas de vencimiento.
+    Parámetros opcionales:
+      - mode: 'hoy' (solo hoy, default) | 'mes' (mes en curso desde día 1 hasta hoy)
+      - from_due / until_due: rango explícito YYYY-MM-DD (sobreescribe mode)
+      - codgas, proveedor, company: filtros de estación/proveedor/empresa (0 = todos)
+    Solo retorna facturas que NO están asignadas a una orden de pago.
+    """
+    from datetime import date
+    today = date.today()
+
+    mode      = request.data.get('mode', 'hoy')
+    from_due  = request.data.get('from_due')
+    until_due = request.data.get('until_due')
+    codgas    = request.data.get('codgas',    '0')
+    proveedor = request.data.get('proveedor', '0')
+    company   = request.data.get('company',   '0')
+
+    # Resolver rango según mode si no se pasaron fechas explícitas
+    if not from_due or not until_due:
+        if mode == 'mes':
+            from_due  = today.replace(day=1).isoformat()
+            until_due = today.isoformat()
+        else:  # 'hoy'
+            from_due  = today.isoformat()
+            until_due = today.isoformat()
+
+    documentos_estaciones = DocumentosEstaciones()
+    estacion_despachos    = EstacionDespachos()
+    estaciones            = estacion_despachos.estaciones()
+
+    company_int = int(company)
+    codgas_int  = int(codgas)
+    prov_int    = int(proveedor)
+
+    if company_int == 0 and codgas_int == 0:
+        estaciones_filtradas = estaciones
+    elif company_int == 0 and codgas_int != 0:
+        estaciones_filtradas = [e for e in estaciones if e["Codigo"] == codgas_int]
+    elif company_int != 0 and codgas_int == 0:
+        estaciones_filtradas = [e for e in estaciones if e.get("codemp") == company_int]
+    else:
+        estaciones_por_empresa = [e for e in estaciones if e.get("codemp") == company_int]
+        estaciones_filtradas   = [e for e in estaciones_por_empresa if e["Codigo"] == codgas_int]
+
+    resultados = []
+    with ThreadPoolExecutor(max_workers=40) as executor:
+        future_to_est = {
+            executor.submit(
+                documentos_estaciones.get_overdue_invoices,
+                est["Servidor"],
+                est["BaseDatos"],
+                est["Codigo"],
+                from_due,
+                until_due,
+                prov_int
+            ): est
+            for est in estaciones_filtradas
+        }
+        for future in as_completed(future_to_est):
+            res = future.result()
+            if res:
+                resultados.extend(res)
+
+    if not resultados:
+        return Response({"detail": "No hay facturas vencidas en el rango indicado"}, status=status.HTTP_404_NOT_FOUND)
+
+    resultados.sort(key=lambda x: (x.get('proveedor') or '', x.get('gasolinera') or ''))
+    return Response(resultados, status=status.HTTP_200_OK)
+ 
 
 @api_view(['GET', 'POST'])
 def analisis_de_compras(request):
