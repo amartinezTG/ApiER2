@@ -285,35 +285,28 @@ def estacion_documentos_compra(request):
         return Response({"detail": "No se encontraron resultados"}, status=status.HTTP_404_NOT_FOUND)
     return Response(resultados, status=status.HTTP_200_OK)
 
-
+ 
 @api_view(['GET', 'POST'])
 def facturas_vencen_hoy(request):
     """
     Retorna facturas de compra vencidas (sin orden de pago) en un rango de fechas de vencimiento.
+    Parámetros requeridos:
+      - from_due: fecha inicio vencimiento YYYY-MM-DD
+      - until_due: fecha fin vencimiento YYYY-MM-DD
     Parámetros opcionales:
-      - mode: 'hoy' (solo hoy, default) | 'mes' (mes en curso desde día 1 hasta hoy)
-      - from_due / until_due: rango explícito YYYY-MM-DD (sobreescribe mode)
       - codgas, proveedor, company: filtros de estación/proveedor/empresa (0 = todos)
     Solo retorna facturas que NO están asignadas a una orden de pago.
     """
-    from datetime import date
-    today = date.today()
-
-    mode      = request.data.get('mode', 'hoy')
-    from_due  = request.data.get('from_due')
-    until_due = request.data.get('until_due')
+    from_due  = request.data.get('from_due',  '')
+    until_due = request.data.get('until_due', '')
     codgas    = request.data.get('codgas',    '0')
     proveedor = request.data.get('proveedor', '0')
     company   = request.data.get('company',   '0')
+    from_int  = request.data.get('from_int',   '0')
+    until_int = request.data.get('until_int',   '0')
 
-    # Resolver rango según mode si no se pasaron fechas explícitas
     if not from_due or not until_due:
-        if mode == 'mes':
-            from_due  = today.replace(day=1).isoformat()
-            until_due = today.isoformat()
-        else:  # 'hoy'
-            from_due  = today.isoformat()
-            until_due = today.isoformat()
+        return Response({"detail": "Se requieren from_due y until_due"}, status=status.HTTP_400_BAD_REQUEST)
 
     documentos_estaciones = DocumentosEstaciones()
     estacion_despachos    = EstacionDespachos()
@@ -332,7 +325,7 @@ def facturas_vencen_hoy(request):
     else:
         estaciones_por_empresa = [e for e in estaciones if e.get("codemp") == company_int]
         estaciones_filtradas   = [e for e in estaciones_por_empresa if e["Codigo"] == codgas_int]
-
+ 
     resultados = []
     with ThreadPoolExecutor(max_workers=40) as executor:
         future_to_est = {
@@ -343,6 +336,8 @@ def facturas_vencen_hoy(request):
                 est["Codigo"],
                 from_due,
                 until_due,
+                from_int,
+                until_int,
                 prov_int
             ): est
             for est in estaciones_filtradas

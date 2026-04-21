@@ -252,19 +252,24 @@ class DocumentosEstaciones:
 
 
     def get_overdue_invoices(self, linked_server, short_db, codgas,
-                             from_due: str, until_due: str, proveedor: int = 0):
+                             from_due: str, until_due: str, from_int,
+                until_int, proveedor: int = 0):
         """
         Obtiene facturas de compra vencidas (sin asignar a orden de pago) en un rango
         de fechas de vencimiento de crédito.
         from_due / until_due: 'YYYY-MM-DD'
         Solo retorna facturas cuyo en_orden_pago = 0.
         """
+        from datetime import date, timedelta
         proveedor_filter = f" AND t4.cod = {proveedor}" if proveedor != 0 else ""
-
+ 
+        # Acotamos el OPENQUERY a emisiones desde 120 días antes de from_due para no
+        # traer todo el historial. El filtro exacto de vencimiento se aplica afuera.
+        from_due_date   = date.fromisoformat(from_due)
+        inner_from_int  = int((from_due_date - timedelta(days=120)).strftime('%Y%m%d')) + 1
         # La fecha interna en ControlGas se almacena como int YYYYMMDD + 1 día (fch),
         # por lo que la fecha_emision real = DATEADD(DAY,-1,fch).
         # El vencimiento = fecha_emision + dias_credito se calcula en el JOIN externo con TG.
-        # El OPENQUERY trae todas las facturas sin filtro de fecha para cubrir el rango pedido.
         # El filtro por rango de vencimiento y en_orden_pago se aplica en la query externa.
         inner_query = f"""
             SELECT
@@ -292,9 +297,9 @@ class DocumentosEstaciones:
                 CONVERT(VARCHAR(10), DATEADD(DAY, -1, t1.fch), 23) AS fecha,
                 CONVERT(VARCHAR(10), DATEADD(DAY, -1, t1.vto), 23) AS fechaVto,
                 CASE
-                    WHEN t3.den IN (''   T-Maxima Regular'', '' Gasolina Regular Menor a 91 Octanos'') THEN ''Regular''
-                    WHEN t3.den IN (''   T-Super Premium'', '' Gasolina Premium Mayor o Igual a 91 Octanos'') THEN ''Super''
-                    WHEN t3.den IN (''   Diesel Automotriz'',''Diesel Automotriz'') THEN ''Diesel''
+                    WHEN t3.den IN ('   T-Maxima Regular', ' Gasolina Regular Menor a 91 Octanos') THEN 'Regular'
+                    WHEN t3.den IN ('   T-Super Premium', ' Gasolina Premium Mayor o Igual a 91 Octanos') THEN 'Super'
+                    WHEN t3.den IN ('   Diesel Automotriz','Diesel Automotriz') THEN 'Diesel'
                 END AS producto,
                 t4.den AS proveedor,
                 t4.cod AS proveedor_codigo,
@@ -346,8 +351,12 @@ class DocumentosEstaciones:
                 GROUP BY nrodoc
             ) t8 ON t1.nro = t8.nrodoc
             WHERE t1.tip = 1 AND t1.subope = 2
+            AND t1.fch >= {from_int}
+            AND t1.fch <= {until_int}
             {proveedor_filter}
         """
+ 
+        inner_query = inner_query.replace("'", "''")
 
         # El filtro por rango de vencimiento y en_orden_pago se aplica FUERA del OPENQUERY
         # para poder usar dias_credito de TG.dbo.Proveedores
@@ -374,6 +383,8 @@ class DocumentosEstaciones:
                 AS DATE) BETWEEN CAST('{from_due}' AS DATE) AND CAST('{until_due}' AS DATE)
                 AND local_inv.uuid IS NULL
         """
+
+        # print(f"SQL para facturas vencidas:\n{sql}")
 
         try:
             with pyodbc.connect(self.conn_str) as conn:
