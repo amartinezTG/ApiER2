@@ -329,7 +329,7 @@ def facturas_vencen_hoy(request):
     resultados = []
     with ThreadPoolExecutor(max_workers=40) as executor:
         future_to_est = {
-            executor.submit(
+            executor.submit( 
                 documentos_estaciones.get_overdue_invoices,
                 est["Servidor"],
                 est["BaseDatos"],
@@ -823,6 +823,114 @@ def tanques_consolidado(request):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
     
+
+
+@api_view(['POST'])
+def volumen_masivo(request):
+    """
+    Historial de volumen de múltiples estaciones en paralelo
+    """
+    print("INICIANDO volumen_masivo")
+
+    try: 
+        codgas_list = request.data.get('codgas_list', [])
+        from_date = request.data.get('from_date')
+        until_date = request.data.get('until_date')
+
+        print(f"codgas_list recibido: {codgas_list} (tipo: {type(codgas_list)})")
+        print(f"from_date: {from_date}, until_date: {until_date}")
+
+        if not codgas_list: 
+            return Response(
+                {"detail": "El parámetro 'codgas_list' es requerido y no puede estar vacío"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if not all([from_date, until_date]):
+            return Response(
+                {"detail": "Los parámetros 'from_date' y 'until_date' son requeridos"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Garantizar que siempre sea lista aunque DRF lo parsee como entero o string
+        if not isinstance(codgas_list, list):
+            codgas_list = [codgas_list]
+
+        codgas_list = [int(c) for c in codgas_list]
+        print(f"codgas_list procesado: {codgas_list}")
+
+        estacion_despachos = EstacionDespachos()
+        inventarios_model = InventariosEstaciones()
+        todas = estacion_despachos.estaciones()
+        estaciones = [est for est in todas if est["Codigo"] in codgas_list]
+
+        if not estaciones:
+            return Response(
+                {"detail": "No se encontraron las estaciones especificadas"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Obtener tanques de cada estación (sincrónico — consulta rápida a BD central)
+        trabajos = []  # lista de (est, tanque_dict)
+        for est in estaciones:
+            tanques = inventarios_model.get_tanques_estacion(
+                est["Servidor"], est["BaseDatos"], est["Codigo"]
+            )
+            for tanque in tanques:
+                trabajos.append((est, tanque))
+
+        if not trabajos:
+            return Response(
+                {"detail": "No se encontraron tanques para las estaciones seleccionadas"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        print(f"Total trabajos (estacion+tanque): {len(trabajos)}")
+
+        resultados = []
+        errores = 0
+
+        with ThreadPoolExecutor(max_workers=40) as executor:
+            future_to_trabajo = {
+                executor.submit(
+                    inventarios_model.get_volumen_date_tanque,
+                    est["Servidor"],
+                    est["BaseDatos"],
+                    est["Codigo"],
+                    int(tanque["cod"]),
+                    int(from_date),
+                    int(until_date)
+                ): (est, tanque)
+                for est, tanque in trabajos
+            }
+
+            for future in as_completed(future_to_trabajo):
+                est, tanque = future_to_trabajo[future]
+                try:
+                    res = future.result()
+                    if res:
+                        for registro in res:
+                            registro["estacion"] = est["Codigo"]
+                            registro["nombre_estacion"] = est["Nombre"]
+                            registro["numero_tan"] = tanque["numero_tan"]
+                        resultados.extend(res)
+                        print(f"✓ {est['Nombre']} T{tanque['numero_tan']}: {len(res)} registros")
+                    else:
+                        print(f"○ {est['Nombre']} T{tanque['numero_tan']}: Sin datos")
+                except Exception as e:
+                    errores += 1
+                    print(f"✗ Error en {est['Nombre']} T{tanque['numero_tan']}: {str(e)}")
+                    continue
+
+        print(f"Consulta masiva completada: {len(resultados)} registros, {errores} errores")
+
+        return Response({"Resultados": resultados}, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        print(f"Error general en volumen_masivo: {str(e)}")
+        return Response(
+            {"detail": f"Error interno: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @api_view(['GET', 'POST'])

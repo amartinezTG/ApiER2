@@ -8,7 +8,7 @@ from .views import (
     er_petrotal,
     er_petrotal_concept,
     gasto_petrotal
-)
+) 
 from .TG_php.views import (
     estacion_porcentaje,
     porcent_estacion_facturados_info,
@@ -26,6 +26,7 @@ from .TG_php.views import (
     resumen_movimientos_tanques,
     get_resumen_recepciones_combustible,
     volumen_date,
+    volumen_masivo,
     compras_facturas_base,
     factura_detalle,
     compras_estadisticas,
@@ -62,8 +63,9 @@ urlpatterns = [
     path('tanques/volumen/', volumen_tanque),
     path('tanques/volumen_date/', volumen_date),
     path('tanques/consolidado/', tanques_consolidado),
+    path('tanques/volumen_masivo/', volumen_masivo),
     path('get_resumen_recepciones_combustible/', get_resumen_recepciones_combustible),
-    path('resumen_movimientos_tanques/', resumen_movimientos_tanques),
+    path('resumen_movimientos_tanques/', resumen_movimientos_tanques), 
 
     path('compras_facturas_base/', compras_facturas_base),
     path('factura_detalle/', factura_detalle),
