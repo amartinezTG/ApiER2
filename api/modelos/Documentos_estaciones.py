@@ -1,7 +1,45 @@
 import pyodbc
 from api.db_connections import CONTROLGAS_CONN_STR
-from datetime import datetime, timedelta
- 
+from datetime import datetime, timedelta, date as date_type
+
+# ---------------------------------------------------------------------------
+# Reglas de ajuste de vencimiento a día hábil por proveedor (id_control_gas)
+#
+#   GRUPO_VIERNES : sábado → viernes anterior  |  domingo → lunes siguiente
+#   GRUPO_LUNES   : sábado → lunes siguiente   |  domingo → lunes siguiente
+#
+# Proveedores no listados no reciben ajuste (calendario corrido).
+# ---------------------------------------------------------------------------
+_GRUPO_VIERNES = {76, 96}          # Lobo (76), Altos Energéticos (96)
+_GRUPO_LUNES   = {56, 71, 72, 83}  # Tesoro (56), Premiergas (71), MGC (72), Enerey (83)
+
+def _ajustar_dia_habil(fecha, proveedor_codigo: int) -> str:
+    """
+    Recibe la fecha de vencimiento calculada (date o str YYYY-MM-DD) y el
+    id_control_gas del proveedor. Retorna la fecha ajustada como str YYYY-MM-DD.
+    """
+    if fecha is None:
+        return None
+    if isinstance(fecha, str):
+        try:
+            fecha = datetime.strptime(fecha[:10], '%Y-%m-%d').date()
+        except ValueError:
+            return str(fecha)[:10]
+    elif hasattr(fecha, 'date'):      # datetime → date
+        fecha = fecha.date()
+
+    dia = fecha.weekday()             # 0=lun … 5=sab, 6=dom
+
+    if dia == 6:                      # domingo → lunes siempre
+        fecha += timedelta(days=1)
+    elif dia == 5:                    # sábado → depende del grupo
+        if proveedor_codigo in _GRUPO_VIERNES:
+            fecha -= timedelta(days=1)   # viernes anterior
+        elif proveedor_codigo in _GRUPO_LUNES:
+            fecha += timedelta(days=2)   # lunes siguiente
+
+    return fecha.strftime('%Y-%m-%d')
+
 class DocumentosEstaciones:
     def __init__(self, conn_str: str = CONTROLGAS_CONN_STR):
         self.conn_str = conn_str
@@ -236,7 +274,7 @@ class DocumentosEstaciones:
             FROM OPENQUERY([{linked_server}], '{inner_query}') remote
             LEFT JOIN [TG].[dbo].[payment_request_invoices] local 
                 ON remote.satuid = local.uuid COLLATE Modern_Spanish_CI_AS
-            LEFT JOIN [TG].[dbo].Proveedores t3 
+            LEFT JOIN [TG].[dbo].Proveedores t3
                 ON t3.id_control_gas = remote.proveedor_codigo
         """
         try:
@@ -245,32 +283,39 @@ class DocumentosEstaciones:
                 cursor.execute(sql)
                 cols = [col[0] for col in cursor.description]
                 rows = cursor.fetchall()
-            return [dict(zip(cols, row)) for row in rows]
+            result = []
+            for row in rows:
+                d = dict(zip(cols, row))
+                prov_cod = int(d.get('proveedor_codigo') or 0)
+                d['fecha_vencimiento_credito'] = _ajustar_dia_habil(
+                    d.get('fecha_vencimiento_credito'), prov_cod
+                )
+                result.append(d)
+            return result
         except Exception as e:
             print(f"Error ejecutando documentos estaciones para {codgas}: {e}")
-            return []
+            return [] 
 
 
     def get_overdue_invoices(self, linked_server, short_db, codgas,
-                             from_due: str, until_due: str, from_int,
-                until_int, proveedor: int = 0):
+                             from_due: str, until_due: str,
+                             from_int=None, until_int=None, proveedor: int = 0):
         """
         Obtiene facturas de compra vencidas (sin asignar a orden de pago) en un rango
-        de fechas de vencimiento de crédito.
-        from_due / until_due: 'YYYY-MM-DD'
-        Solo retorna facturas cuyo en_orden_pago = 0.
+        de fechas de vencimiento. from_due / until_due: 'YYYY-MM-DD'.
+        from_int / until_int ignorados — el método calcula su propio rango de emisión.
         """
         from datetime import date, timedelta
         proveedor_filter = f" AND t4.cod = {proveedor}" if proveedor != 0 else ""
  
-        # Acotamos el OPENQUERY a emisiones desde 120 días antes de from_due para no
-        # traer todo el historial. El filtro exacto de vencimiento se aplica afuera.
-        from_due_date   = date.fromisoformat(from_due)
-        inner_from_int  = int((from_due_date - timedelta(days=120)).strftime('%Y%m%d')) + 1
-        # La fecha interna en ControlGas se almacena como int YYYYMMDD + 1 día (fch),
-        # por lo que la fecha_emision real = DATEADD(DAY,-1,fch).
-        # El vencimiento = fecha_emision + dias_credito se calcula en el JOIN externo con TG.
-        # El filtro por rango de vencimiento y en_orden_pago se aplica en la query externa.
+        # El OPENQUERY filtra por fecha de emisión (fch, en formato int YYYYMMDD+1).
+        # Para cubrir todos los vencimientos del rango pedido hay que retroceder
+        # al menos max_dias_credito días antes de from_due.
+        # Usamos 120 días como margen seguro (el crédito más largo conocido es ~90 días).
+        from_due_date  = date.fromisoformat(from_due)
+        until_due_date = date.fromisoformat(until_due)
+        inner_from_int = int((from_due_date  - timedelta(days=120)).strftime('%Y%m%d')) + 1
+        inner_until_int= int((until_due_date + timedelta(days=1)).strftime('%Y%m%d'))  + 1
         inner_query = f"""
             SELECT
                 t1.nro,
@@ -351,8 +396,8 @@ class DocumentosEstaciones:
                 GROUP BY nrodoc
             ) t8 ON t1.nro = t8.nrodoc
             WHERE t1.tip = 1 AND t1.subope = 2
-            AND t1.fch >= {from_int}
-            AND t1.fch <= {until_int}
+            AND t1.fch >= {inner_from_int}
+            AND t1.fch <= {inner_until_int}
             {proveedor_filter}
         """
  
@@ -392,7 +437,15 @@ class DocumentosEstaciones:
                 cursor.execute(sql)
                 cols = [col[0] for col in cursor.description]
                 rows = cursor.fetchall()
-            return [dict(zip(cols, row)) for row in rows]
+            result = []
+            for row in rows:
+                d = dict(zip(cols, row))
+                prov_cod = int(d.get('proveedor_codigo') or 0)
+                d['fecha_vencimiento_credito'] = _ajustar_dia_habil(
+                    d.get('fecha_vencimiento_credito'), prov_cod
+                )
+                result.append(d)
+            return result
         except Exception as e:
             print(f"Error en get_overdue_invoices para {codgas} [{linked_server}]: {e}")
             return []
