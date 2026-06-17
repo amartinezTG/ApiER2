@@ -152,7 +152,9 @@ class DocumentosEstaciones:
     #     except Exception as e:
     #         print(f"Error ejecutando documentos estaciones para {codgas}: {e}")
     #         return []
-
+    
+    #funcion refactorizada para evitar joins dentro del OPENQUERY y así poder usar dias_credito de TG.dbo.Proveedores en el filtro de vencimiento, se usa para crear los pagos de facturas recibidas y 
+    # para el análisis de compras (que también muestra vencimientos) 
     def get_purchase_from_station(self, linked_server, short_db, codgas, from_date, until_date, proveedor):
         prov = int(proveedor or 0)
         proveedor_filter = f" AND t4.cod = {prov}" if prov != 0 else ""
@@ -255,27 +257,43 @@ class DocumentosEstaciones:
         inner_query = inner_query.replace("'", "''")
 
         sql = f"""
-            SELECT 
+            SELECT
                 remote.*,
                 local.id AS payment_invoice_id,
                 local.payment_request_id,
                 local.status AS payment_status,
                 local.paid_amount,
-                CASE 
+                CASE
                     WHEN local.uuid IS NOT NULL THEN 1
                     ELSE 0
                 END AS en_orden_pago,
                 t3.dias_credito,
+                -- Fecha de emisión efectiva: si existe la factura en FacturasRecibidas se usa su Fecha,
+                -- de lo contrario se cae a la fecha de ControlGas (remote.fecha). Esta es la base del vencimiento.
+                CONVERT(VARCHAR(10),
+                    CASE WHEN fr.Id IS NOT NULL THEN CONVERT(DATE, fr.Fecha)
+                         ELSE CONVERT(DATE, remote.fecha, 23) END,
+                    23
+                ) AS fecha_emision_efectiva,
+                CASE WHEN fr.Id IS NOT NULL THEN 1 ELSE 0 END AS fecha_de_factura,
                 DATEADD(
                     DAY,
                     ISNULL(t3.dias_credito, 0),
-                    CONVERT(DATE, remote.fecha, 23)
-                ) AS fecha_vencimiento_credito
+                    CASE WHEN fr.Id IS NOT NULL THEN CONVERT(DATE, fr.Fecha)
+                         ELSE CONVERT(DATE, remote.fecha, 23) END
+                ) AS fecha_vencimiento_credito,
+                fr.Total AS total_factura_recibida,
+                CASE
+                    WHEN fr.Id IS NOT NULL THEN 1
+                    ELSE 0
+                END AS tiene_factura_recibida  
             FROM OPENQUERY([{linked_server}], '{inner_query}') remote
-            LEFT JOIN [TG].[dbo].[payment_request_invoices] local 
+            LEFT JOIN [TG].[dbo].[payment_request_invoices] local
                 ON remote.satuid = local.uuid COLLATE Modern_Spanish_CI_AS
             LEFT JOIN [TG].[dbo].Proveedores t3
                 ON t3.id_control_gas = remote.proveedor_codigo
+            LEFT JOIN [TG].[dbo].[FacturasRecibidas] fr
+                ON fr.UUID = remote.satuid COLLATE Modern_Spanish_CI_AS
         """
         try:
             with pyodbc.connect(self.conn_str) as conn:
