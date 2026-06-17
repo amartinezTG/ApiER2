@@ -308,14 +308,15 @@ class DocumentosEstaciones:
         from datetime import date, timedelta
         proveedor_filter = f" AND t4.cod = {proveedor}" if proveedor != 0 else ""
  
-        # El OPENQUERY filtra por fecha de emisión (fch, en formato int YYYYMMDD+1).
+        # fch en ControlGas es un serial de Excel: días desde 1899-12-31.
+        # Ejemplo: 2026-06-03 = 46175  (DATEADD(DAY, 46175, '1899-12-31') = 2026-06-03)
         # Para cubrir todos los vencimientos del rango pedido hay que retroceder
-        # al menos max_dias_credito días antes de from_due.
-        # Usamos 120 días como margen seguro (el crédito más largo conocido es ~90 días).
-        from_due_date  = date.fromisoformat(from_due)
-        until_due_date = date.fromisoformat(until_due)
-        inner_from_int = int((from_due_date  - timedelta(days=120)).strftime('%Y%m%d')) + 1
-        inner_until_int= int((until_due_date + timedelta(days=1)).strftime('%Y%m%d'))  + 1
+        # al menos 120 días antes de from_due (margen mayor que el crédito más largo ~90 días).
+        EPOCH = date(1899, 12, 31)
+        from_due_date   = date.fromisoformat(from_due)
+        until_due_date  = date.fromisoformat(until_due)
+        inner_from_int  = (from_due_date  - timedelta(days=120) - EPOCH).days
+        inner_until_int = (until_due_date + timedelta(days=1)   - EPOCH).days
         inner_query = f"""
             SELECT
                 t1.nro,
@@ -398,7 +399,7 @@ class DocumentosEstaciones:
             WHERE t1.tip = 1 AND t1.subope = 2
             AND t1.fch >= {inner_from_int}
             AND t1.fch <= {inner_until_int}
-            {proveedor_filter}
+            {proveedor_filter}   
         """
  
         inner_query = inner_query.replace("'", "''")
@@ -416,12 +417,19 @@ class DocumentosEstaciones:
                 t3.dias_credito,
                 CAST(
                     DATEADD(DAY, ISNULL(t3.dias_credito, 0), CONVERT(DATE, remote.fecha, 23))
-                AS VARCHAR(10)) AS fecha_vencimiento_credito
+                AS VARCHAR(10)) AS fecha_vencimiento_credito,
+                est.Denominacion AS razon_social_estacion,
+                fr.Id            AS fr_id
             FROM OPENQUERY([{linked_server}], '{inner_query}') remote
             LEFT JOIN [TG].[dbo].[payment_request_invoices] local_inv
                 ON remote.satuid = local_inv.uuid COLLATE Modern_Spanish_CI_AS
             LEFT JOIN [TG].[dbo].Proveedores t3
                 ON t3.id_control_gas = remote.proveedor_codigo
+            LEFT JOIN [TG].[dbo].Estaciones est
+                ON est.Codigo = remote.codgas
+            LEFT JOIN [TG].[dbo].FacturasRecibidas fr
+                ON fr.UUID = remote.satuid COLLATE Modern_Spanish_CI_AS
+                AND fr.RutaArchivo IS NOT NULL AND fr.RutaArchivo != ''
             WHERE
                 CAST(
                     DATEADD(DAY, ISNULL(t3.dias_credito, 0), CONVERT(DATE, remote.fecha, 23))
