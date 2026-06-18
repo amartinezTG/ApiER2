@@ -6,7 +6,7 @@ import pyodbc
 from typing import Dict, Any, Optional, List
 from decimal import Decimal
 from api.db_connections import CONTROLGASTG_CONN_STR
-
+ 
 
 INSERT_FACTURA = """
     INSERT INTO FacturasRecibidas (
@@ -18,13 +18,22 @@ INSERT_FACTURA = """
         RutaArchivo, NombreArchivo
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
-
+ 
 INSERT_CONCEPTO = """
     INSERT INTO [TG].[dbo].[FacturasRecibidasConceptos]
     ([FacturaId],[Cantidad],[ClaveProdServ],[ClaveUnidad],[Descripcion],
      [ValorUnitario],[Importe],[NoIdentificacion],[ObjetoImp],[Impuesto],
      [TasaOCuota],[TipoFactor],[Base],[Unidad],[ImporteImpuesto])
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+"""
+
+UPDATE_FACTURA = """
+    UPDATE FacturasRecibidas SET
+        Folio = ?, Fecha = ?, FormaPago = ?, MetodoPago = ?, Moneda = ?,
+        SubTotal = ?, Total = ?, Exportacion = ?, TipoDeComprobante = ?,
+        LugarExpedicion = ?, EmisorNombre = ?, EmisorRfc = ?, EmisorRegimenFiscal = ?,
+        ReceptorNombre = ?, ReceptorRfc = ?, FechaTimbrado = ?, Destino = ?, Remision = ?
+    WHERE Id = ?
 """
 
 
@@ -41,6 +50,65 @@ class ImportadorFacturas:
             )
             count = cursor.fetchone()[0]
             return count > 0
+
+    def obtener_factura_por_uuid(self, uuid: str) -> Optional[Dict[str, Any]]:
+        """Devuelve Id, SubTotal y Total de la factura con ese UUID, o None si no existe."""
+        with pyodbc.connect(self.conn_str) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT Id, SubTotal, Total FROM FacturasRecibidas WHERE UUID = ?", (uuid,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {"Id": row[0], "SubTotal": row[1], "Total": row[2]}
+
+    def factura_incompleta(self, factura: Dict[str, Any]) -> bool:
+        """Una factura se considera incompleta si su SubTotal o Total quedaron en 0."""
+        subtotal = factura.get("SubTotal") or Decimal("0")
+        total = factura.get("Total") or Decimal("0")
+        return subtotal == 0 or total == 0
+
+    def tiene_conceptos(self, factura_id: int) -> bool:
+        """Verifica si la factura ya tiene conceptos insertados."""
+        with pyodbc.connect(self.conn_str) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(1) FROM [TG].[dbo].[FacturasRecibidasConceptos] WHERE FacturaId = ?",
+                (factura_id,)
+            )
+            return cursor.fetchone()[0] > 0
+
+    def actualizar_factura(self, factura_id: int, d: Dict[str, Any]) -> None:
+        """Actualiza la cabecera de una factura existente con datos recién extraídos."""
+        with pyodbc.connect(self.conn_str) as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(UPDATE_FACTURA, (
+                    d.get("Folio", ""),
+                    d.get("Fecha"),
+                    d.get("FormaPago", ""),
+                    d.get("MetodoPago", ""),
+                    d.get("Moneda", "MXN"),
+                    d.get("SubTotal", Decimal("0")),
+                    d.get("Total", Decimal("0")),
+                    d.get("Exportacion", "01"),
+                    (d.get("TipoDeComprobante") or "")[:1],
+                    d.get("LugarExpedicion", ""),
+                    d.get("EmisorNombre", ""),
+                    d.get("EmisorRFC", ""),
+                    d.get("EmisorRegimenFiscal", ""),
+                    d.get("ReceptorNombre", ""),
+                    d.get("ReceptorRfc", ""),
+                    d.get("FechaTimbrado"),
+                    d.get("Destino", ""),
+                    d.get("Remision", ""),
+                    factura_id,
+                ))
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                raise e
 
     def insertar_factura(self, d: Dict[str, Any]) -> Optional[int]:
         """Inserta cabecera de factura y retorna su ID."""

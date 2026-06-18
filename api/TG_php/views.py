@@ -888,7 +888,7 @@ def volumen_masivo(request):
 
         resultados = []
         errores = 0
-
+ 
         with ThreadPoolExecutor(max_workers=40) as executor:
             future_to_trabajo = {
                 executor.submit(
@@ -1345,7 +1345,9 @@ def importar_factura_pdf(request):
 
         # --- Verificar duplicado por UUID ---
         importador = ImportadorFacturas()
-        if uuid and importador.uuid_existe(uuid):
+        factura_existente = importador.obtener_factura_por_uuid(uuid) if uuid else None
+
+        if factura_existente and not importador.factura_incompleta(factura_existente):
             return Response({
                 "estado": "duplicada",
                 "factura_id": None,
@@ -1364,11 +1366,38 @@ def importar_factura_pdf(request):
             except Exception as e:
                 logger.warning(f"Error extrayendo conceptos para {proveedor}: {e}")
 
-        # --- Normalizar e insertar factura ---
+        # --- Normalizar datos de cabecera ---
         datos['RutaArchivo'] = ''
         datos['NombreArchivo'] = pdf_file.name
         datos = importador.normalizar_factura(datos)
 
+        sigue_incompleta = importador.factura_incompleta(datos)
+        advertencia = (
+            "Factura importada con SubTotal/Total en 0 — revisar el PDF manualmente."
+            if sigue_incompleta else None
+        )
+
+        if factura_existente:
+            # Factura incompleta (Total/SubTotal en 0): actualizar en vez de insertar.
+            factura_id = factura_existente["Id"]
+            importador.actualizar_factura(factura_id, datos)
+
+            conceptos_insertados = 0
+            if conceptos and not importador.tiene_conceptos(factura_id):
+                conceptos_norm = [importador.normalizar_concepto(c) for c in conceptos]
+                conceptos_insertados = importador.insertar_conceptos(factura_id, conceptos_norm)
+ 
+            return Response({
+                "estado": "exitosa",
+                "factura_id": factura_id,
+                "uuid": uuid,
+                "proveedor": proveedor,
+                "conceptos_insertados": conceptos_insertados,
+                "advertencia": advertencia,
+                "mensaje": f"Factura incompleta corregida. ID={factura_id}, {conceptos_insertados} concepto(s)."
+            }, status=status.HTTP_200_OK)
+
+        # --- Insertar factura nueva ---
         factura_id = importador.insertar_factura(datos)
 
         # --- Insertar conceptos ---
@@ -1383,6 +1412,7 @@ def importar_factura_pdf(request):
             "uuid": uuid,
             "proveedor": proveedor,
             "conceptos_insertados": conceptos_insertados,
+            "advertencia": advertencia,
             "mensaje": f"Factura importada correctamente. ID={factura_id}, {conceptos_insertados} concepto(s)."
         }, status=status.HTTP_201_CREATED)
 
