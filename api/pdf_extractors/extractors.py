@@ -580,31 +580,16 @@ def extract_with_profile_aemsa(doc: fitz.Document) -> Dict[str, Any]:
         data["SubTotal"] = dec_from_money(m.group(1))
 
     # === TOTAL ===
-    # En AEMSA hay dos ocurrencias de TOTAL:
-    # 1. En la tabla de conceptos (columna IMPORTE)
-    # 2. Al pie de la factura (después del IVA)
-    # 
-    # El formato es:
-    # IVA 16%:
-    # $337,779.15
-    # TOTAL:
-    #
-    # Necesitamos capturar el monto que está entre "IVA 16%:" y "TOTAL:"
-    
-    m = re.search(r'IVA\s+16%:\s*\n\s*\$?\s*([0-9,]+\.\d+)\s*\n\s*TOTAL:', full_text, re.I)
-    if m:
-        data["Total"] = dec_from_money(m.group(1))
+    # Capturar directamente el monto que sigue a la etiqueta "TOTAL:" (\b evita matchear "SUBTOTAL:").
+    # Si hay varias ocurrencias (p.ej. también aparece en la tabla de conceptos), se toma la última,
+    # que corresponde al resumen final de la factura.
+    matches_total = list(re.finditer(r'\bTOTAL:\s*\$?\s*([0-9,]+\.\d+)', full_text, re.I))
+    if matches_total:
+        data["Total"] = dec_from_money(matches_total[-1].group(1))
     else:
-        # Alternativa: buscar la última ocurrencia de monto antes de "TOTAL:"
-        # que venga después de SUBTOTAL
-        idx_subtotal = full_text.upper().find('SUBTOTAL:')
-        if idx_subtotal >= 0:
-            text_after_subtotal = full_text[idx_subtotal:]
-            # Buscar todos los montos que vienen antes de "TOTAL:"
-            matches = list(re.finditer(r'\$?\s*([0-9,]+\.\d+)\s*\n[^\n]*TOTAL:', text_after_subtotal, re.I))
-            if matches:
-                # El último monto antes de TOTAL: es el total real
-                data["Total"] = dec_from_money(matches[-1].group(1))
+        m = re.search(r'IVA\s+16%:\s*\n\s*\$?\s*([0-9,]+\.\d+)\s*\n\s*TOTAL:', full_text, re.I)
+        if m:
+            data["Total"] = dec_from_money(m.group(1))
 
     # === DESTINO ===
     # Buscar en "Dirección de Entrega"
@@ -851,7 +836,7 @@ def extraer_datos_pdf(path_pdf: Path, provider_hint: str = None) -> Dict[str, An
         # Detección de proveedor
         full_text = " ".join([p.get_text() or "" for p in doc])
         provider_key = detect_provider_profile(full_text, provider_hint=provider_hint)
-
+ 
         if provider_key == "lobo":
             data = extract_with_profile_lobo(doc)
         elif provider_key == "mcg":

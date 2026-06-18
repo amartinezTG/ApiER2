@@ -1286,6 +1286,7 @@ def importar_factura_pdf(request):
 
     pdf_file = request.FILES.get('pdf')
     proveedor = (request.data.get('proveedor') or '').strip().lower()
+    forzar = str(request.data.get('forzar', '0')).strip() in ('1', 'true', 'True')
 
 
     if not pdf_file:
@@ -1347,7 +1348,7 @@ def importar_factura_pdf(request):
         importador = ImportadorFacturas()
         factura_existente = importador.obtener_factura_por_uuid(uuid) if uuid else None
 
-        if factura_existente and not importador.factura_incompleta(factura_existente):
+        if factura_existente and not importador.factura_incompleta(factura_existente) and not forzar:
             return Response({
                 "estado": "duplicada",
                 "factura_id": None,
@@ -1376,17 +1377,28 @@ def importar_factura_pdf(request):
             "Factura importada con SubTotal/Total en 0 — revisar el PDF manualmente."
             if sigue_incompleta else None
         )
-
+ 
         if factura_existente:
-            # Factura incompleta (Total/SubTotal en 0): actualizar en vez de insertar.
+            # Factura incompleta (Total/SubTotal en 0) o actualización forzada por el usuario:
+            # actualizar en vez de insertar.
             factura_id = factura_existente["Id"]
+            era_incompleta = importador.factura_incompleta(factura_existente)
+            total_anterior = factura_existente.get("Total")
             importador.actualizar_factura(factura_id, datos)
 
             conceptos_insertados = 0
             if conceptos and not importador.tiene_conceptos(factura_id):
                 conceptos_norm = [importador.normalizar_concepto(c) for c in conceptos]
                 conceptos_insertados = importador.insertar_conceptos(factura_id, conceptos_norm)
- 
+
+            if era_incompleta:
+                mensaje = f"Factura incompleta corregida. ID={factura_id}, {conceptos_insertados} concepto(s)."
+            else:
+                mensaje = (
+                    f"Actualización forzada. ID={factura_id}. "
+                    f"Total anterior={total_anterior} -> nuevo={datos.get('Total')}."
+                )
+
             return Response({
                 "estado": "exitosa",
                 "factura_id": factura_id,
@@ -1394,7 +1406,10 @@ def importar_factura_pdf(request):
                 "proveedor": proveedor,
                 "conceptos_insertados": conceptos_insertados,
                 "advertencia": advertencia,
-                "mensaje": f"Factura incompleta corregida. ID={factura_id}, {conceptos_insertados} concepto(s)."
+                "forzado": not era_incompleta,
+                "total_anterior": str(total_anterior) if total_anterior is not None else None,
+                "total_nuevo": str(datos.get('Total')) if datos.get('Total') is not None else None,
+                "mensaje": mensaje
             }, status=status.HTTP_200_OK)
 
         # --- Insertar factura nueva ---
