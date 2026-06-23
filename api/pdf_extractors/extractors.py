@@ -446,6 +446,9 @@ def extract_with_profile_aemsa(doc: fitz.Document) -> Dict[str, Any]:
 
     # RFC Emisor: buscar el patrón "RFC: AEM-160511-LMA" o "RFC: AEM160511LMA"
     m = re.search(r'RFC:\s*(AEM[-]?\d{6}[-]?[A-Z0-9]{3})', full_text, re.I)
+    if not m:
+        # Formato nuevo: el valor precede a la etiqueta ("AEM160511LMA\nRFC:")
+        m = re.search(r'(AEM[-]?\d{6}[-]?[A-Z0-9]{3})\s*\n\s*RFC:', full_text, re.I)
     if m:
         rfc_raw = m.group(1).strip()
         # Remover guiones para normalizar
@@ -474,6 +477,12 @@ def extract_with_profile_aemsa(doc: fitz.Document) -> Dict[str, Any]:
         if m:
             rfc_receptor = m.group(1).strip()
             data["ReceptorRfc"] = rfc_receptor.replace('-', '')
+        else:
+            # Formato nuevo: el RFC precede a la etiqueta ("ECU0602287R6\nFACTURADO A RFC:")
+            m = re.search(r'([A-Z]{3}[-]?\d{6}[-]?[A-Z0-9]{3})\s*\n\s*FACTURADO\s+[Aa]\s+RFC:', full_text, re.I)
+            if m:
+                rfc_receptor = m.group(1).strip()
+                data["ReceptorRfc"] = rfc_receptor.replace('-', '')
 
     # Nombre del receptor viene después del RFC (en la siguiente línea)
     m = re.search(r'FACTURADO\s+[Aa]\s+RFC:?\s*[A-Z]{3}[-]?\d{6}[-]?[A-Z0-9]{3}\s+([A-Z\s&.]+?)(?:\s+USO\s+CFDI)', full_text, re.I)
@@ -484,70 +493,99 @@ def extract_with_profile_aemsa(doc: fitz.Document) -> Dict[str, Any]:
         m = re.search(r'FACTURADO\s+[Aa]\s+RFC:?\s*[^\n]+\n\s*([A-Z][A-Z\s&.]+(?:SA|S\.A\.|DE\s+CV|S\.\s*DE\s*R\.L\.))', full_text, re.I)
         if m:
             data["ReceptorNombre"] = m.group(1).strip()
+        elif data["ReceptorRfc"]:
+            # Formato nuevo: el nombre del receptor viene en la línea siguiente a
+            # "FACTURADO A RFC:" (cuando el RFC ya quedó precedido a la etiqueta).
+            m = re.search(r'FACTURADO\s+[Aa]\s+RFC:\s*\n\s*([A-Z][A-Z0-9\s&.,]+?)\s*\n', full_text, re.I)
+            if m:
+                data["ReceptorNombre"] = m.group(1).strip()
 
     # === FOLIO ===
-    # En AEMSA, el folio F##### aparece ANTES de la palabra FACTURA
-    # Ejemplo: "F89667\nFACTURA"
+    # Formato antiguo: el folio F##### aparece ANTES o DESPUÉS de la palabra FACTURA ("F89667\nFACTURA")
+    # Formato nuevo: FACTURA 02-8800001573 (sin prefijo F, con guion)
     m = re.search(r'(F\d+)\s+FACTURA', full_text, re.I)
     if m:
         data["Folio"] = m.group(1).strip()
     else:
-        # Patrón alternativo: FACTURA seguido de F##### (por si acaso)
         m = re.search(r'FACTURA\s+(F\d+)', full_text, re.I)
         if m:
             data["Folio"] = m.group(1).strip()
+        else:
+            # Formato nuevo: FACTURA seguido de folio alfanumérico (con o sin guiones)
+            m = re.search(r'FACTURA\s+([A-Z0-9-]+)\s+Tipo\s+Comp', full_text, re.I)
+            if m:
+                data["Folio"] = m.group(1).strip()
+            else:
+                m = re.search(r'\bFACTURA\s+([A-Z0-9-]{5,})\b', full_text, re.I)
+                if m:
+                    data["Folio"] = m.group(1).strip()
 
     # === UUID ===
+    # Formato antiguo: etiqueta "Folio Fiscal:". Formato nuevo: no existe esa etiqueta,
+    # el UUID solo aparece junto a "Certificado SAT:" (en minúsculas, sin guiones en mayúsculas).
     m = re.search(r'Folio\s+Fiscal:\s*([A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12})', full_text, re.I)
     if m:
         data["UUID"] = m.group(1).upper()
+    else:
+        m = re.search(r'Certificado\s+SAT:\s*([A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12})', full_text, re.I)
+        if m:
+            data["UUID"] = m.group(1).upper()
 
     # === FECHA EMISIÓN (está debajo de "Fecha del Documento") ===
-    # Buscar la fecha que viene después del texto "Fecha del Documento"
-    m = re.search(r'Fecha\s+del\s+Documento[^\d]*(\d{2}/\d{2}/\d{4})[^\d]*(\d{2}:\d{2}:\d{2})', full_text, re.I)
+    # Formato antiguo: dd/mm/yyyy hh:mm:ss. Formato nuevo: yyyy-mm-dd hh:mm:ss
+    m = re.search(r'Fecha\s+del\s+[Dd]ocumento[^\d]*(\d{4})-(\d{2})-(\d{2})[^\d]*(\d{2}:\d{2}:\d{2})', full_text, re.I)
     if m:
-        # Convertir de dd/mm/yyyy a yyyy-mm-dd
-        fecha_str = m.group(1)  # 25/09/2025
-        hora_str = m.group(2)   # 10:38:53
-        partes = fecha_str.split('/')
-        fecha_iso = f"{partes[2]}-{partes[1]}-{partes[0]}T{hora_str}"
+        anio, mes, dia, hora_str = m.group(1), m.group(2), m.group(3), m.group(4)
+        fecha_iso = f"{anio}-{mes}-{dia}T{hora_str}"
         data["Fecha"] = parse_iso_datetime(fecha_iso)
     else:
-        # Alternativa: buscar formato de fecha cerca del folio
-        m = re.search(r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', full_text)
+        m = re.search(r'Fecha\s+del\s+[Dd]ocumento[^\d]*(\d{2})/(\d{2})/(\d{4})[^\d]*(\d{2}:\d{2}:\d{2})', full_text, re.I)
         if m:
-            fecha_str = m.group(1)
-            hora_str = m.group(2)
-            partes = fecha_str.split('/')
-            fecha_iso = f"{partes[2]}-{partes[1]}-{partes[0]}T{hora_str}"
+            dia, mes, anio, hora_str = m.group(1), m.group(2), m.group(3), m.group(4)
+            fecha_iso = f"{anio}-{mes}-{dia}T{hora_str}"
             data["Fecha"] = parse_iso_datetime(fecha_iso)
+        else:
+            # Alternativa: buscar formato de fecha cerca del folio (dd/mm/yyyy o yyyy-mm-dd)
+            m = re.search(r'(\d{4})-(\d{2})-(\d{2})\s+(\d{2}:\d{2}:\d{2})', full_text)
+            if m:
+                anio, mes, dia, hora_str = m.group(1), m.group(2), m.group(3), m.group(4)
+                fecha_iso = f"{anio}-{mes}-{dia}T{hora_str}"
+                data["Fecha"] = parse_iso_datetime(fecha_iso)
+            else:
+                m = re.search(r'(\d{2})/(\d{2})/(\d{4})\s+(\d{2}:\d{2}:\d{2})', full_text)
+                if m:
+                    dia, mes, anio, hora_str = m.group(1), m.group(2), m.group(3), m.group(4)
+                    fecha_iso = f"{anio}-{mes}-{dia}T{hora_str}"
+                    data["Fecha"] = parse_iso_datetime(fecha_iso)
 
     # === FECHA TIMBRADO ===
-    # La fecha aparece ANTES del texto "Fecha y Hora de cert.:"
-    # Ejemplo:
-    # 19/09/2025 23:28:39
-    # Fecha y Hora de cert.:
-    
-    # Buscar fecha ANTES de "Fecha y Hora de cert.:"
-    m = re.search(r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})\s*\n\s*Fecha\s+y\s+Hora\s+de\s+cert\.?:', full_text, re.I)
+    # Formato antiguo: fecha dd/mm/yyyy ANTES de "Fecha y Hora de cert.:"
+    # Formato nuevo: etiqueta "Fecha Timbrado:" seguida de dd-mm-yyyy hh:mm:ss
+    m = re.search(r'Fecha\s+Timbrado:\s*(\d{2})-(\d{2})-(\d{4})\s+(\d{2}:\d{2}:\d{2})', full_text, re.I)
     if m:
-        fecha_str = m.group(1)
-        hora_str = m.group(2)
-        partes = fecha_str.split('/')
-        fecha_iso = f"{partes[2]}-{partes[1]}-{partes[0]}T{hora_str}"
+        dia, mes, anio, hora_str = m.group(1), m.group(2), m.group(3), m.group(4)
+        fecha_iso = f"{anio}-{mes}-{dia}T{hora_str}"
         data["FechaTimbrado"] = parse_iso_datetime(fecha_iso)
     else:
-        # Alternativa: buscar simplemente la segunda ocurrencia de fecha/hora (después de Fecha del Documento)
-        # Esto captura la fecha de timbrado
-        fechas = list(re.finditer(r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', full_text))
-        if len(fechas) >= 2:
-            # La segunda fecha suele ser la de timbrado
-            m = fechas[1]
+        m = re.search(r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})\s*\n\s*Fecha\s+y\s+Hora\s+de\s+cert\.?:', full_text, re.I)
+        if m:
             fecha_str = m.group(1)
             hora_str = m.group(2)
             partes = fecha_str.split('/')
             fecha_iso = f"{partes[2]}-{partes[1]}-{partes[0]}T{hora_str}"
             data["FechaTimbrado"] = parse_iso_datetime(fecha_iso)
+        else:
+            # Alternativa: buscar simplemente la segunda ocurrencia de fecha/hora (después de Fecha del Documento)
+            # Esto captura la fecha de timbrado
+            fechas = list(re.finditer(r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', full_text))
+            if len(fechas) >= 2:
+                # La segunda fecha suele ser la de timbrado
+                m = fechas[1]
+                fecha_str = m.group(1)
+                hora_str = m.group(2)
+                partes = fecha_str.split('/')
+                fecha_iso = f"{partes[2]}-{partes[1]}-{partes[0]}T{hora_str}"
+                data["FechaTimbrado"] = parse_iso_datetime(fecha_iso)
 
     # === LUGAR EXPEDICIÓN ===
     m = re.search(r'Lugar\s+de\s+Expedicion\s+(\d{5})', full_text, re.I)
@@ -576,6 +614,9 @@ def extract_with_profile_aemsa(doc: fitz.Document) -> Dict[str, Any]:
 
     # === SUBTOTAL ===
     m = re.search(r'SUBTOTAL:\s*\$?\s*([0-9,]+\.\d+)', full_text, re.I)
+    if not m:
+        # Formato nuevo: el monto precede a la etiqueta ("$463,498.49 \nSUBTOTAL:")
+        m = re.search(r'\$?\s*([0-9,]+\.\d+)\s*\n\s*SUBTOTAL:', full_text, re.I)
     if m:
         data["SubTotal"] = dec_from_money(m.group(1))
 
@@ -584,12 +625,22 @@ def extract_with_profile_aemsa(doc: fitz.Document) -> Dict[str, Any]:
     # Si hay varias ocurrencias (p.ej. también aparece en la tabla de conceptos), se toma la última,
     # que corresponde al resumen final de la factura.
     matches_total = list(re.finditer(r'\bTOTAL:\s*\$?\s*([0-9,]+\.\d+)', full_text, re.I))
-    if matches_total:
+    if matches_total and dec_from_money(matches_total[-1].group(1)) > 0:
         data["Total"] = dec_from_money(matches_total[-1].group(1))
     else:
         m = re.search(r'IVA\s+16%:\s*\n\s*\$?\s*([0-9,]+\.\d+)\s*\n\s*TOTAL:', full_text, re.I)
         if m:
             data["Total"] = dec_from_money(m.group(1))
+        else:
+            # Formato nuevo: el monto precede a la etiqueta ("$535,357.89 \nTOTAL:")
+            # (\bTOTAL\b evita confundir con "SUBTOTAL:" o "DESCUENTO:" que pueden
+            # aparecer en cualquier orden en este layout). Se prueba antes de quedarnos
+            # con el "TOTAL: $0.00" que en este layout en realidad pertenece a DESCUENTO.
+            m = re.search(r'\$?\s*([0-9,]+\.\d+)\s*\n\s*\bTOTAL:', full_text, re.I)
+            if m:
+                data["Total"] = dec_from_money(m.group(1))
+            elif matches_total:
+                data["Total"] = dec_from_money(matches_total[-1].group(1))
 
     # === DESTINO ===
     # Buscar en "Dirección de Entrega"
@@ -775,7 +826,7 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
         if m:
             data["MetodoPago"] = m.group(1).strip()
 
-    # === SUBTOTAL ===
+    # === SUBTOTAL === 
     m = re.search(r'Subtotal:\s*\$?\s*([0-9,]+\.\d+)', full_text, re.I)
     if m:
         data["SubTotal"] = dec_from_money(m.group(1))

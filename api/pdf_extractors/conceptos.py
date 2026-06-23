@@ -21,7 +21,7 @@ def extraer_conceptos_lobo_por_tabla(path_pdf: Path) -> List[Dict[str, Any]]:
         import pdfplumber
     except Exception:
         return conceptos
-
+ 
     def norm(s: Any) -> str:
         return _strip_diacritics((s or "")).strip().upper()
 
@@ -604,8 +604,10 @@ def extraer_conceptos_aemsa(path_pdf: Path) -> List[Dict[str, Any]]:
             # Buscar líneas que contengan conceptos de combustible
             # Patrón: CANTIDAD CLAVE UDM DESCRIPCION OBJ PRECIO IMPORTE IVA
             # Ejemplo: 15459 15101514 LTR GASOLINA REGULAR 02 $18.914799 $292,403.88 $45,375.27
-            
-            pattern = r'(\d+(?:\.\d+)?)\s+(\d{8})\s+([A-Z]{2,4})\s+(.*?GASOLINA.*?|.*?DIESEL.*?|.*?MAGNA.*?|.*?PREMIUM.*?)\s+(\d{2})\s+\$([0-9,.]+)\s+\$([0-9,.]+)\s+\$([0-9,.]+)'
+            # La descripción se identifica por posición (entre UDM y el código OBJ de 2 dígitos),
+            # sin exigir palabras de producto específicas (antes solo soportaba GASOLINA/DIESEL/
+            # MAGNA/PREMIUM y no reconocía productos como "ARCO-REGULAR" o "ARCO-PREMIUM").
+            pattern = r'(\d+(?:,\d{3})*(?:\.\d+)?)\s+(\d{8})\s+([A-Z]{2,4})\s+([A-Z0-9][A-Z0-9\-\s]*?)\s+(\d{2})\s+\$([0-9,.]+)\s+\$([0-9,.]+)\s+\$([0-9,.]+)'
             
             for match in re.finditer(pattern, page_text, re.I):
                 cantidad = _to_dec(match.group(1), prec=4)
