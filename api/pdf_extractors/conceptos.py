@@ -21,7 +21,7 @@ def extraer_conceptos_lobo_por_tabla(path_pdf: Path) -> List[Dict[str, Any]]:
         import pdfplumber
     except Exception:
         return conceptos
- 
+  
     def norm(s: Any) -> str:
         return _strip_diacritics((s or "")).strip().upper()
 
@@ -651,8 +651,9 @@ def extraer_conceptos_enerey(path_pdf: Path) -> List[Dict[str, Any]]:
     """
     Extrae conceptos de facturas ENEREY usando regex del texto plano.
 
-    Formato típico en ENEREY:
-    21726.00 LITRO  GASPREG  GASOLINA REGULAR  $18.354450  $398,768.78
+    Formato actual (2026) en ENEREY:
+    15101514 Gasolina Regular 19791 02 LTR - Litro $18.185019 $359,899.71
+    (ClaveProdServ Descripcion Cantidad ObjetoImp Unidad - Litro PrecioUnitario Importe)
     """
     cpts: List[Dict[str, Any]] = []
 
@@ -661,17 +662,62 @@ def extraer_conceptos_enerey(path_pdf: Path) -> List[Dict[str, Any]]:
     except Exception:
         return cpts
 
+    pattern_actual = (
+        r'(\d{8})\s+([A-Za-z][A-Za-z\s]*?)\s+(?:\W*Clave\s+SAT:\s*\d{8}\W*)?'
+        r'(\d+(?:\.\d+)?)\s+(\d{2})\s+'
+        r'(LTR|LITRO)\s*-\s*Litro\s+\$([0-9,.]+)\s+\$([0-9,.]+)'
+    )
+    pattern_legacy = r'(\d+(?:\.\d+)?)\s+(LITRO|LTR)\s+([A-Z]+)\s+(.*?(?:GASOLINA|DIESEL|MAGNA|PREMIUM).*?)\s+\$([0-9,.]+)\s+\$([0-9,.]+)'
+
     with pdfplumber.open(str(path_pdf)) as pdf:
         for page in pdf.pages:
             page_text = page.extract_text() or ""
 
-            # Buscar la tabla de conceptos
-            # Patrón: CANTIDAD UNIDAD CLAVE DESCRIPCION VALOR_UNITARIO IMPORTE
-            # Ejemplo: 21726.00 LITRO GASPREG GASOLINA REGULAR $18.354450 $398,768.78
+            matches = list(re.finditer(pattern_actual, page_text, re.I))
+            if matches:
+                for match in matches:
+                    clave_prod_serv = match.group(1)
+                    descripcion = match.group(2).strip()
+                    cantidad = _to_dec(match.group(3), prec=4)
+                    objeto_imp = match.group(4)
+                    unidad_raw = match.group(5).upper()
+                    clave_unidad = "LTR" if unidad_raw in ("LITRO", "LTR", "L") else unidad_raw
+                    valor_unitario = _to_dec(match.group(6), prec=6)
+                    importe = _to_dec(match.group(7), prec=2)
 
-            pattern = r'(\d+(?:\.\d+)?)\s+(LITRO|LTR)\s+([A-Z]+)\s+(.*?(?:GASOLINA|DIESEL|MAGNA|PREMIUM).*?)\s+\$([0-9,.]+)\s+\$([0-9,.]+)'
+                    # Base e IVA reales: "IVA 16%, Base: $base $importeIva"
+                    base = importe if importe > 0 else (cantidad * valor_unitario)
+                    tasa = Decimal('0.160000')
+                    m_iva = re.search(
+                        r'IVA\s*16%,?\s*Base:\s*\$([0-9,.]+)\s+\$([0-9,.]+)',
+                        page_text, re.I
+                    )
+                    if m_iva:
+                        base = _to_dec(m_iva.group(1), prec=6)
+                        iva_importe = _to_dec(m_iva.group(2), prec=6)
+                    else:
+                        iva_importe = (base * tasa).quantize(Decimal('1.000000'))
 
-            for match in re.finditer(pattern, page_text, re.I):
+                    cpts.append({
+                        "Cantidad": cantidad,
+                        "ClaveProdServ": clave_prod_serv,
+                        "ClaveUnidad": clave_unidad,
+                        "Descripcion": descripcion,
+                        "ValorUnitario": valor_unitario,
+                        "Importe": importe,
+                        "NoIdentificacion": clave_prod_serv,
+                        "ObjetoImp": objeto_imp,
+                        "Impuesto": "IVA",
+                        "TasaOCuota": tasa,
+                        "TipoFactor": "Tasa",
+                        "Base": base.quantize(Decimal('1.000000')),
+                        "Unidad": clave_unidad,
+                        "ImporteImpuesto": iva_importe
+                    })
+                continue
+
+            # Respaldo: formato antiguo (CANTIDAD UNIDAD CLAVE DESCRIPCION $PU $IMPORTE)
+            for match in re.finditer(pattern_legacy, page_text, re.I):
                 cantidad = _to_dec(match.group(1), prec=4)
                 unidad_raw = match.group(2).upper()
                 clave_unidad = "LTR" if unidad_raw in ("LITRO", "LTR", "L") else unidad_raw
@@ -681,18 +727,14 @@ def extraer_conceptos_enerey(path_pdf: Path) -> List[Dict[str, Any]]:
                 valor_unitario = _to_dec(match.group(5), prec=6)
                 importe = _to_dec(match.group(6), prec=2)
 
-                # Buscar clave SAT en el texto (suele estar en líneas siguientes)
-                # Ejemplo: "Clave SAT: 15101514 - Gasolina regular menor a 91 octanos"
                 clave_prod_serv = "15101515"  # Default
                 m_clave = re.search(r'Clave\s+SAT:\s*(\d{8})', page_text, re.I)
                 if m_clave:
                     clave_prod_serv = m_clave.group(1)
 
-                # Calcular base e IVA
                 base = importe if importe > 0 else (cantidad * valor_unitario)
-                tasa = Decimal('0.160000')  # IVA 16% estándar
+                tasa = Decimal('0.160000')
 
-                # Buscar IVA en el texto
                 iva_importe = Decimal('0')
                 m_iva = re.search(r'IVA:\s*\$?\s*([0-9,]+\.\d+)', page_text, re.I)
                 if m_iva:

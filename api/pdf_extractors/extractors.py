@@ -714,73 +714,113 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
             break
 
     # === RECEPTOR NOMBRE ===
-    if data["ReceptorRfc"]:
+    # Layout actual: "Razon Social" <salto> NOMBRE <salto> "RFC" <salto> RFC
+    m = re.search(r'Razon\s+Social\s+([A-Z][A-Z\s&.]{3,60}?)\s*(?:\n|RFC)', full_text, re.I)
+    if m:
+        data["ReceptorNombre"] = m.group(1).strip()
+    elif data["ReceptorRfc"]:
         rfc_pos = full_text.find(data["ReceptorRfc"])
         if rfc_pos > 0:
             text_before = full_text[max(0, rfc_pos-200):rfc_pos]
+            # Excluir la etiqueta "RFC" que precede inmediatamente al valor
+            text_before = re.sub(r'\bRFC\s*$', '', text_before, flags=re.I)
             m = re.findall(r'\b([A-Z][A-Z\s&.]{3,40})\b', text_before)
             if m:
                 data["ReceptorNombre"] = m[-1].strip()
 
     # === FOLIO ===
-    m = re.search(r'\b(E)\s+(\d{5})\b', full_text)
+    # Formato actual: "Folio" seguido en la línea siguiente por "E-#####" o "EF-##"
+    m = re.search(r'\b([A-Z]{1,2}-\d+)\b', full_text)
     if m:
-        data["Folio"] = f"{m.group(1)}{m.group(2)}"
+        data["Folio"] = m.group(1)
     else:
-        m = re.search(r'Factura[^\d]+(E\s*\d+)', full_text, re.I)
+        m = re.search(r'\b(E)\s+(\d{5})\b', full_text)
         if m:
-            data["Folio"] = re.sub(r'\s+', '', m.group(1))
+            data["Folio"] = f"{m.group(1)}{m.group(2)}"
+        else:
+            m = re.search(r'Factura[^\d]+(E\s*\d+)', full_text, re.I)
+            if m:
+                data["Folio"] = re.sub(r'\s+', '', m.group(1))
 
     # === UUID ===
-    m = re.search(r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', full_text, re.I)
+    # Preferir la Cadena Original del SAT: el UUID ahí siempre viene completo
+    # (en el bloque "Folio Fiscal" el UUID se parte en dos líneas y pierde un guion
+    # al extraer texto por bloques, p.ej. "95BA106D-E104-4978A451-366DAE1B5C49").
+    m = re.search(
+        r'\|\|?\d\.\d\|([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\|',
+        full_text, re.I
+    )
     if m:
         data["UUID"] = m.group(1).lower()
+    else:
+        m = re.search(r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', full_text, re.I)
+        if m:
+            data["UUID"] = m.group(1).lower()
 
-    # === FECHAS - MEJORADO PARA MANEJAR ESPACIOS VARIABLES ===
-    # Buscar todas las fechas/horas en el documento con espacios flexibles
-    fechas_matches = list(re.finditer(
-        r'(\d{2}/\d{2}/\d{4})\s+(\d{1,2}:\d{2}:\d{2})',
-        full_text
-    ))
-    
-    if len(fechas_matches) >= 2:
-        # La segunda fecha es la de emisión
-        m = fechas_matches[1]
-        dia, mes, anio = m.group(1).split('/')
-        hora = m.group(2)
-        # Normalizar hora a HH:MM:SS si viene como H:MM:SS
-        if len(hora.split(':')[0]) == 1:
-            hora = '0' + hora
-        fecha_iso = f"{anio}-{mes}-{dia}T{hora}"
-        data["Fecha"] = parse_iso_datetime(fecha_iso)
-
-    if len(fechas_matches) >= 1:
-        # La primera fecha es la de certificación/timbrado
-        m = fechas_matches[0]
-        dia, mes, anio = m.group(1).split('/')
+    # === FECHAS ===
+    # Formato actual: "Fecha emisión" / "Fecha certific." seguidas de "yyyy-mm-dd hh:mm:ss"
+    m = re.search(r'Fecha\s+emisi[oó]n\s+(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2}:\d{2})', full_text, re.I)
+    if m:
         hora = m.group(2)
         if len(hora.split(':')[0]) == 1:
             hora = '0' + hora
-        fecha_iso = f"{anio}-{mes}-{dia}T{hora}"
-        data["FechaTimbrado"] = parse_iso_datetime(fecha_iso)
+        data["Fecha"] = parse_iso_datetime(f"{m.group(1)}T{hora}")
+
+    m = re.search(r'Fecha\s+certific\.?\s+(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2}:\d{2})', full_text, re.I)
+    if m:
+        hora = m.group(2)
+        if len(hora.split(':')[0]) == 1:
+            hora = '0' + hora
+        data["FechaTimbrado"] = parse_iso_datetime(f"{m.group(1)}T{hora}")
+
+    # Respaldo: formato antiguo dd/mm/yyyy hh:mm:ss
+    if data["Fecha"] is None or data["FechaTimbrado"] is None:
+        fechas_matches = list(re.finditer(
+            r'(\d{2}/\d{2}/\d{4})\s+(\d{1,2}:\d{2}:\d{2})',
+            full_text
+        ))
+        if data["FechaTimbrado"] is None and len(fechas_matches) >= 1:
+            m = fechas_matches[0]
+            dia, mes, anio = m.group(1).split('/')
+            hora = m.group(2)
+            if len(hora.split(':')[0]) == 1:
+                hora = '0' + hora
+            data["FechaTimbrado"] = parse_iso_datetime(f"{anio}-{mes}-{dia}T{hora}")
+        if data["Fecha"] is None and len(fechas_matches) >= 2:
+            m = fechas_matches[1]
+            dia, mes, anio = m.group(1).split('/')
+            hora = m.group(2)
+            if len(hora.split(':')[0]) == 1:
+                hora = '0' + hora
+            data["Fecha"] = parse_iso_datetime(f"{anio}-{mes}-{dia}T{hora}")
 
     # === LUGAR EXPEDICIÓN ===
-    m = re.search(r'Lugar\s+de\s+expedicion:\s*(\d{5})', full_text, re.I)
+    # Formato actual: "Lugar emisión" seguido de "CIUDAD, ESTADO, CP" (CP al final)
+    m = re.search(r'Lugar\s+emisi[oó]n\s+[^,\n]+,\s*[^,\n]+,\s*(\d{5})', full_text, re.I)
     if m:
         data["LugarExpedicion"] = m.group(1).strip()
     else:
-        m = re.search(r'(\d{5})\s*-\s*SAN\s+PEDRO\s+GARZA\s+GARCIA', full_text, re.I)
+        m = re.search(r'Lugar\s+de\s+expedicion:\s*(\d{5})', full_text, re.I)
         if m:
             data["LugarExpedicion"] = m.group(1).strip()
+        else:
+            m = re.search(r'(\d{5})\s*-\s*SAN\s+PEDRO\s+GARZA\s+GARCIA', full_text, re.I)
+            if m:
+                data["LugarExpedicion"] = m.group(1).strip()
 
     # === TIPO COMPROBANTE ===
-    m = re.search(r'([IEPNT])\s*-\s*(Ingreso|Egreso|Traslado|Nomina|Pago)', full_text, re.I)
+    # Formato actual: "Tipo de CFDI" seguido de "I - Ingreso"
+    m = re.search(r'Tipo\s+de\s+CFDI\s+([IEPNT])\s*-\s*(Ingreso|Egreso|Traslado|Nomina|Pago)', full_text, re.I)
     if m:
         data["TipoDeComprobante"] = m.group(1).upper()
     else:
-        m = re.search(r'Tipo\s+de\s+Comprobante[:\s]*([IEPNT])', full_text, re.I)
+        m = re.search(r'([IEPNT])\s*-\s*(Ingreso|Egreso|Traslado|Nomina|Pago)', full_text, re.I)
         if m:
             data["TipoDeComprobante"] = m.group(1).upper()
+        else:
+            m = re.search(r'Tipo\s+de\s+Comprobante[:\s]*([IEPNT])', full_text, re.I)
+            if m:
+                data["TipoDeComprobante"] = m.group(1).upper()
 
     # === DETECTAR COMPLEMENTO DE PAGO O NOTA DE CRÉDITO ===
     is_pago = False
@@ -792,7 +832,7 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
         is_pago = True
     elif tipo_comp == "E":
         is_nota_credito = True
-    
+     
     # Verificaciones adicionales para complemento de pago
     if (re.search(r'Uso\s+de\s+CFDI:\s*CP01', full_text, re.I) or
         re.search(r'Recibo\s+de\s+pago', full_text, re.I) or
@@ -809,48 +849,73 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
     data["__is_nota_credito"] = is_nota_credito
 
     # === FORMA DE PAGO ===
-    m = re.search(r'Forma\s+de\s+pago:\s*(\d{2})', full_text, re.I)
+    # Formato actual: "Forma de pago" (sin ':') seguido de "99 - Por definir"
+    m = re.search(r'Forma\s+de\s+pago\s+(\d{2})', full_text, re.I)
     if m:
         data["FormaPago"] = m.group(1)
     else:
-        m = re.search(r'Forma\s+de\s+pago:\s*([^\n]+)', full_text, re.I)
+        m = re.search(r'Forma\s+de\s+pago:\s*(\d{2})', full_text, re.I)
         if m:
-            data["FormaPago"] = m.group(1).strip()
+            data["FormaPago"] = m.group(1)
+        else:
+            m = re.search(r'Forma\s+de\s+pago:?\s*([^\n]+)', full_text, re.I)
+            if m:
+                data["FormaPago"] = m.group(1).strip()
 
     # === MÉTODO DE PAGO ===
-    m = re.search(r'Metodo\s+de\s+pago:\s*([A-Z]{3})', full_text, re.I)
+    # Formato actual: "Método de pago" (sin ':'); el valor "PPD - Pago..." puede
+    # aparecer después de otros campos (Moneda) por el orden de bloques del PDF.
+    m = re.search(r'\b([A-Z]{3})\s*-\s*Pago\s+en\s+parcialidades', full_text, re.I)
     if m:
-        data["MetodoPago"] = m.group(1)
+        data["MetodoPago"] = m.group(1).upper()
     else:
-        m = re.search(r'Metodo\s+de\s+pago:\s*([^\n]+)', full_text, re.I)
+        m = re.search(r'\b([A-Z]{3})\s*-\s*Pago\s+en\s+una\s+sola\s+exhibicion', full_text, re.I)
         if m:
-            data["MetodoPago"] = m.group(1).strip()
+            data["MetodoPago"] = m.group(1).upper()
+        else:
+            m = re.search(r'Metodo\s+de\s+pago:?\s*([A-Z]{3})', full_text, re.I)
+            if m:
+                data["MetodoPago"] = m.group(1)
+            else:
+                m = re.search(r'Metodo\s+de\s+pago:?\s*([^\n]+)', full_text, re.I)
+                if m:
+                    data["MetodoPago"] = m.group(1).strip()
 
-    # === SUBTOTAL === 
-    m = re.search(r'Subtotal:\s*\$?\s*([0-9,]+\.\d+)', full_text, re.I)
+    # === SUBTOTAL ===
+    # Formato actual: "Subtotal" (sin ':') ... puede estar separado del monto por
+    # otras etiquetas (IVA 16%, Total) según el bloque del PDF; se toma el primer
+    # monto en dólares que sigue a la etiqueta.
+    m = re.search(r'Subtotal\s+\$\s*([0-9,]+\.\d+)', full_text, re.I)
     if m:
         data["SubTotal"] = dec_from_money(m.group(1))
+    else:
+        m = re.search(r'Subtotal:?\s*\$?\s*([0-9,]+\.\d+)', full_text, re.I)
+        if m:
+            data["SubTotal"] = dec_from_money(m.group(1))
 
     # === TOTAL ===
-    m = re.search(r'IVA:.*?TOTAL:\s*\$?\s*([0-9,]+\.\d+)', full_text, re.I | re.DOTALL)
-    if m:
-        data["Total"] = dec_from_money(m.group(1))
+    # Formato actual: "Total" (sin ':') seguido del monto final de la factura.
+    # Se usa la ÚLTIMA ocurrencia de "Total $monto" para evitar capturar el
+    # "Importe" de los conceptos.
+    matches_total = list(re.finditer(r'\bTotal\s+\$\s*([0-9,]+\.\d+)', full_text, re.I))
+    if matches_total:
+        data["Total"] = dec_from_money(matches_total[-1].group(1))
     else:
-        m = re.search(r'\bTOTAL:\s*\$?\s*([0-9,]+\.\d+)', full_text)
+        m = re.search(r'IVA:.*?TOTAL:\s*\$?\s*([0-9,]+\.\d+)', full_text, re.I | re.DOTALL)
         if m:
             data["Total"] = dec_from_money(m.group(1))
+        else:
+            m = re.search(r'\bTOTAL:\s*\$?\s*([0-9,]+\.\d+)', full_text)
+            if m:
+                data["Total"] = dec_from_money(m.group(1))
 
     # === DESTINO ===
-    m = re.search(r'Pedido\s+Interno:\s*([^\n]+)', full_text, re.I)
+    # Formato actual: bloque de etiquetas libres "PL: ... Remision:#### Destino:## ,O.C ##"
+    m = re.search(r'\bDestino:\s*([A-Za-z0-9]+)', full_text, re.I)
     if m:
-        destino_completo = m.group(1).strip()
-        m_permiso = re.search(r'(PL/\d+/[A-Z]+/[A-Z]+/\d{4})', destino_completo)
-        if m_permiso:
-            data["Destino"] = m_permiso.group(1)
-        else:
-            data["Destino"] = destino_completo.split()[0] if destino_completo else ""
+        data["Destino"] = m.group(1).strip()
     else:
-        m = re.search(r'Entregado\s+a:\s*([^\n]+)', full_text, re.I)
+        m = re.search(r'Pedido\s+Interno:\s*([^\n]+)', full_text, re.I)
         if m:
             destino_completo = m.group(1).strip()
             m_permiso = re.search(r'(PL/\d+/[A-Z]+/[A-Z]+/\d{4})', destino_completo)
@@ -858,14 +923,23 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
                 data["Destino"] = m_permiso.group(1)
             else:
                 data["Destino"] = destino_completo.split()[0] if destino_completo else ""
+        else:
+            m = re.search(r'Entregado\s+a:\s*([^\n]+)', full_text, re.I)
+            if m:
+                destino_completo = m.group(1).strip()
+                m_permiso = re.search(r'(PL/\d+/[A-Z]+/[A-Z]+/\d{4})', destino_completo)
+                if m_permiso:
+                    data["Destino"] = m_permiso.group(1)
+                else:
+                    data["Destino"] = destino_completo.split()[0] if destino_completo else ""
 
     # === REMISIÓN ===
-    m = re.search(r'REMISION:\s*(\d+)', full_text, re.I)
+    # Formato actual: "Remision:1214159" dentro del bloque de etiquetas libres
+    m = re.search(r'Remision:\s*(\d+)', full_text, re.I)
     if m:
         data["Remision"] = m.group(1).strip()
     else:
-        # Alternativa: buscar en observaciones
-        m = re.search(r'Remision:\s*(\d+)', full_text, re.I)
+        m = re.search(r'REMISION:\s*(\d+)', full_text, re.I)
         if m:
             data["Remision"] = m.group(1).strip()
 
