@@ -6,7 +6,7 @@ import pyodbc
 from typing import Dict, Any, Optional, List
 from decimal import Decimal
 from api.db_connections import CONTROLGASTG_CONN_STR
- 
+  
 
 INSERT_FACTURA = """
     INSERT INTO FacturasRecibidas (
@@ -105,6 +105,20 @@ class ImportadorFacturas:
                     d.get("Remision", ""),
                     factura_id,
                 ))
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                raise e
+
+    def actualizar_ruta_archivo(self, factura_id: int, ruta: str, nombre_archivo: str) -> None:
+        """Actualiza RutaArchivo y NombreArchivo tras mover/renombrar el PDF en disco."""
+        with pyodbc.connect(self.conn_str) as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "UPDATE FacturasRecibidas SET RutaArchivo = ?, NombreArchivo = ? WHERE Id = ?",
+                    (ruta, nombre_archivo, factura_id),
+                )
                 conn.commit()
             except Exception as e:
                 conn.rollback()

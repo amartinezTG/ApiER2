@@ -746,7 +746,7 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
     # Preferir la Cadena Original del SAT: el UUID ahí siempre viene completo
     # (en el bloque "Folio Fiscal" el UUID se parte en dos líneas y pierde un guion
     # al extraer texto por bloques, p.ej. "95BA106D-E104-4978A451-366DAE1B5C49").
-    m = re.search(
+    m = re.search( 
         r'\|\|?\d\.\d\|([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\|',
         full_text, re.I
     )
@@ -1208,23 +1208,32 @@ def extract_with_profile_essafuel(doc: fitz.Document) -> Dict[str, Any]:
     if m:
         data["FormaPago"] = m.group(1).strip()
 
-    # === SUBTOTAL ===
-    # Buscar después de la palabra "Subtotal" en la columna derecha
-    m = re.search(r'Subtotal\s+\$([0-9,]+\.\d+)', full_text, re.I)
+    # === SUBTOTAL / TOTAL ===
+    # Formato actual: etiquetas en bloque seguido de TODOS los montos en bloque,
+    # en el mismo orden: Subtotal, Descuento, Impuestos Trasladados,
+    # Impuestos Retenidos, Total $a $b $c $d $e (sin adyacencia etiqueta-monto).
+    m = re.search(
+        r'Subtotal\s+Descuento\s+Impuestos\s+Trasladados\s+Impuestos\s+Retenidos\s+Total\s+'
+        r'\$([0-9,]+\.\d+)\s+\$([0-9,]+\.\d+)\s+\$([0-9,]+\.\d+)\s+\$([0-9,]+\.\d+)\s+\$([0-9,]+\.\d+)',
+        full_text, re.I
+    )
     if m:
         data["SubTotal"] = dec_from_money(m.group(1))
-
-    # === TOTAL ===
-    # Para complementos de pago, buscar "Total" seguido del monto
-    # Puede aparecer como "Total $625,148.93" o en línea separada
-    m = re.search(r'Total\s+\$([0-9,]+\.\d+)', full_text, re.I)
-    if m:
-        data["Total"] = dec_from_money(m.group(1))
+        data["Total"] = dec_from_money(m.group(5))
     else:
-        # Buscar en "Importe Pagado" de documentos relacionados
-        m = re.search(r'Importe\s+Pagado[^\d]*\$?([0-9,]+\.\d+)', full_text, re.I)
+        # Respaldo: formato antiguo con monto adyacente a la etiqueta
+        m = re.search(r'Subtotal\s+\$([0-9,]+\.\d+)', full_text, re.I)
+        if m:
+            data["SubTotal"] = dec_from_money(m.group(1))
+
+        m = re.search(r'Total\s+\$([0-9,]+\.\d+)', full_text, re.I)
         if m:
             data["Total"] = dec_from_money(m.group(1))
+        else:
+            # Buscar en "Importe Pagado" de documentos relacionados
+            m = re.search(r'Importe\s+Pagado[^\d]*\$?([0-9,]+\.\d+)', full_text, re.I)
+            if m:
+                data["Total"] = dec_from_money(m.group(1))
 
     # === DESTINO ===
     # Buscar permiso en observaciones

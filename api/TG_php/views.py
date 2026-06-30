@@ -1246,6 +1246,36 @@ def compras_estadisticas(request):
 
 
 @api_view(['POST'])
+def actualizar_ruta_factura(request):
+    """
+    Actualiza RutaArchivo y NombreArchivo de una factura ya importada.
+
+    Se usa después de mover/renombrar el PDF en disco (por ejemplo, al
+    archivarlo con el UUID como nombre final), para mantener sincronizada
+    la base de datos con la ubicación real del archivo.
+
+    Input (JSON o form-data): { "factura_id": int, "ruta": str, "nombre_archivo": str }
+    """
+    factura_id = request.data.get('factura_id')
+    ruta = request.data.get('ruta') or ''
+    nombre_archivo = request.data.get('nombre_archivo') or ''
+
+    if not factura_id:
+        return Response({"detail": "Falta factura_id."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        importador = ImportadorFacturas()
+        importador.actualizar_ruta_archivo(int(factura_id), ruta, nombre_archivo)
+        return Response({"estado": "exitosa"}, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error en actualizar_ruta_factura: {e}", exc_info=True)
+        return Response(
+            {"detail": f"Error al actualizar ruta: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+ 
+@api_view(['POST'])
 @parser_classes([MultiPartParser])
 def importar_factura_pdf(request):
     """
