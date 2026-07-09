@@ -290,6 +290,7 @@ class DocumentosEstaciones:
             FROM OPENQUERY([{linked_server}], '{inner_query}') remote
             LEFT JOIN [TG].[dbo].[payment_request_invoices] local
                 ON remote.satuid = local.uuid COLLATE Modern_Spanish_CI_AS
+                AND local.is_deleted = 0
             LEFT JOIN [TG].[dbo].Proveedores t3
                 ON t3.id_control_gas = remote.proveedor_codigo
             LEFT JOIN [TG].[dbo].[FacturasRecibidas] fr
@@ -441,6 +442,7 @@ class DocumentosEstaciones:
             FROM OPENQUERY([{linked_server}], '{inner_query}') remote
             LEFT JOIN [TG].[dbo].[payment_request_invoices] local_inv
                 ON remote.satuid = local_inv.uuid COLLATE Modern_Spanish_CI_AS
+                AND local_inv.is_deleted = 0
             LEFT JOIN [TG].[dbo].Proveedores t3
                 ON t3.id_control_gas = remote.proveedor_codigo
             LEFT JOIN [TG].[dbo].Estaciones est
@@ -639,9 +641,10 @@ class DocumentosEstaciones:
                 t4.satuid AS satuid_corp,
                 t4.nro AS nro_corp_2
             FROM OPENQUERY([{linked_server}], '{inner_query}') remote
-            LEFT JOIN [TG].[dbo].[payment_request_invoices] local 
+            LEFT JOIN [TG].[dbo].[payment_request_invoices] local
                 ON remote.satuid = local.uuid COLLATE Modern_Spanish_CI_AS
-            LEFT JOIN [TG].[dbo].Proveedores t3 
+                AND local.is_deleted = 0
+            LEFT JOIN [TG].[dbo].Proveedores t3
                 ON t3.id_control_gas = remote.proveedor_codigo
             LEFT JOIN [TG].[dbo].FacturasRecibidas fr 
                 ON remote.satuid = fr.UUID COLLATE Modern_Spanish_CI_AS
