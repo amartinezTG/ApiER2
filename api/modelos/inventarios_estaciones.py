@@ -513,3 +513,82 @@ class InventariosEstaciones:
             logger.error(f"Error consolidado tanques estación {codigo_estacion}: {str(e)}")
             print(f"Error: {e}")
             return []
+
+    def get_inventarios_turnos_estacion(self, servidor, base_datos, codigo_estacion, from_fch, until_fch):
+        """
+        Inventarios por TURNO (11/21/41) de una estación. Port fiel de la consulta
+        interna de TG.dbo.sp_obtener_inventarios_por_turno para que los números
+        cuadren con /supply/tgr01. Fechas en serial ControlGas (días desde 1899-12-31).
+        A diferencia de los otros métodos, LANZA la excepción en error SQL para que
+        la vista distinga estación caída de estación sin datos.
+        """
+        from_fch = int(from_fch)
+        until_fch = int(until_fch)
+        prds = '1,2,3,179,180,181,192,193'
+        query = f"""
+        SELECT
+            V.Fecha, V.Producto, V.CodProducto, V.Turno, V.VentasReales,
+            I.Cantidad AS Inventario,
+            ISNULL(C.CantidadCompra, 0) AS CantidadCompra,
+            ISNULL(IA.Cantidad, 0) AS InventarioInicial,
+            ROUND((ISNULL(IA.Cantidad, 0) - V.VentasReales) + ISNULL(C.CantidadCompra, 0), 2) AS InventarioContable,
+            ROUND(I.Cantidad - ROUND((IA.Cantidad - V.VentasReales) + ISNULL(C.CantidadCompra, 0), 2), 2) AS Diferencia
+        FROM (
+            SELECT
+                CONVERT(VARCHAR(10), CAST(t1.fch AS DATETIME) - 1, 23) AS Fecha, t3.den AS Producto,
+                CASE WHEN t1.nrotur IN (30,31) THEN 41 ELSE t1.nrotur END AS Turno,
+                SUM(t1.canven) AS VentasReales, t1.codprd AS CodProducto, t2.codgas AS CodGasolinera, t1.fch
+            FROM [{base_datos}].dbo.Ventas t1
+            LEFT JOIN [{base_datos}].dbo.Islas t2 ON t1.codisl = t2.cod
+            LEFT JOIN [{base_datos}].dbo.Productos t3 ON t1.codprd = t3.cod
+            WHERE t1.codprd IN ({prds}) AND t1.fch BETWEEN {from_fch} AND {until_fch}
+            GROUP BY t3.den, t1.fch, t2.codgas, t1.codprd, CASE WHEN t1.nrotur IN (30, 31) THEN 41 ELSE t1.nrotur END
+        ) V
+        LEFT JOIN (
+            SELECT
+                CONVERT(VARCHAR(10), CAST(fch AS DATETIME) - 1, 23) AS Fecha, SUM(can) AS Cantidad,
+                codprd AS CodProducto, codgas AS CodGasolinera,
+                CASE WHEN nrotur = 10 THEN 11 WHEN nrotur = 20 THEN 21 WHEN nrotur IN (30, 40) THEN 41 END AS Turno
+            FROM [{base_datos}].dbo.StockReal (NOLOCK)
+            WHERE fch BETWEEN {from_fch} AND {until_fch} AND codprd IN ({prds}) AND nrotur NOT IN (30, 31)
+            GROUP BY fch, codprd, codgas, nrotur
+        ) I ON V.Fecha = I.Fecha AND V.CodProducto = I.CodProducto AND V.CodGasolinera = I.CodGasolinera AND V.Turno = I.Turno
+        LEFT JOIN (
+            SELECT
+                CONVERT(VARCHAR(10), CAST(fch AS DATETIME) - 1, 23) AS Fecha, SUM(can) AS Cantidad,
+                codprd AS CodProducto, codgas AS CodGasolinera,
+                CASE WHEN nrotur = 10 THEN 11 WHEN nrotur = 20 THEN 21 WHEN nrotur IN (30, 40) THEN 41 END AS Turno, fch
+            FROM [{base_datos}].dbo.StockReal (NOLOCK)
+            WHERE fch BETWEEN ({from_fch} - 1) AND ({until_fch} - 1) AND codprd IN ({prds}) AND nrotur NOT IN (30, 31)
+            GROUP BY fch, codprd, codgas, nrotur
+        ) IA ON (V.fch - 1) = IA.fch AND V.CodProducto = IA.CodProducto AND V.CodGasolinera = IA.CodGasolinera AND V.Turno = IA.Turno
+        LEFT JOIN (
+            SELECT
+                CONVERT(VARCHAR(10), CAST(fch AS DATETIME) - 1, 23) AS Fecha, codprd AS CodProducto, codgas AS CodGasolinera,
+                SUM(ROUND(can, 0)) AS CantidadCompra,
+                CASE WHEN nrotur IN (10, 11) THEN 11 WHEN nrotur IN (20, 21) THEN 21 WHEN nrotur IN (30, 31, 40, 41) THEN 41 END AS Turno
+            FROM [{base_datos}].dbo.Movimientos (NOLOCK)
+            WHERE fch BETWEEN {from_fch} AND {until_fch} AND can > 0 AND codprd IN ({prds})
+            GROUP BY fch, codgas, codprd, CASE WHEN nrotur IN (10, 11) THEN 11 WHEN nrotur IN (20, 21) THEN 21 WHEN nrotur IN (30, 31, 40, 41) THEN 41 END
+        ) C ON V.Fecha = C.Fecha AND V.CodProducto = C.CodProducto AND V.CodGasolinera = C.CodGasolinera AND V.Turno = C.Turno
+        ORDER BY V.Fecha, V.Producto, V.Turno
+        """
+        query_escaped = query.replace("'", "''")
+        sql = f"SELECT * FROM OPENQUERY([{servidor}], '{query_escaped}')"
+
+        with pyodbc.connect(self.conn_str, timeout=60) as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql)
+            cols = [col[0] for col in cursor.description]
+            rows = cursor.fetchall()
+
+        results = []
+        for row in rows:
+            row_dict = {}
+            for idx, col in enumerate(cols):
+                value = row[idx]
+                if isinstance(value, Decimal):
+                    value = float(value)
+                row_dict[col] = value
+            results.append(row_dict)
+        return results
