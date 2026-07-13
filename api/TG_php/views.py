@@ -1470,3 +1470,58 @@ def importar_factura_pdf(request):
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+@api_view(['POST'])
+def inventarios_turnos_distribuido(request):
+    """
+    Inventarios por TURNO de todas las estaciones en paralelo (merma diaria).
+    Fechas YYYY-MM-DD -> serial ControlGas (días desde 1899-12-31, como
+    dateToInt() en AplicativoPhp). NO usa YYYYMMDD.
+    """
+    from datetime import datetime, date
+    import time
+
+    from_date = request.data.get('from')
+    to_date = request.data.get('to')
+    codgas = int(request.data.get('codgas') or 0)
+    if not from_date or not to_date:
+        return Response({"detail": "Los parámetros 'from' y 'to' son requeridos"},
+                        status=status.HTTP_400_BAD_REQUEST)
+    try:
+        from_fch = (datetime.strptime(from_date, '%Y-%m-%d').date() - date(1899, 12, 31)).days
+        until_fch = (datetime.strptime(to_date, '%Y-%m-%d').date() - date(1899, 12, 31)).days
+    except ValueError:
+        return Response({"detail": "Fechas inválidas, formato esperado YYYY-MM-DD"},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    inicio = time.time()
+    estaciones = EstacionDespachos().estaciones()
+    if codgas:
+        estaciones = [e for e in estaciones if int(e["Codigo"]) == codgas]
+    if not estaciones:
+        return Response({"detail": "No se encontraron estaciones"}, status=status.HTTP_404_NOT_FOUND)
+
+    inventarios_model = InventariosEstaciones()
+    resultados, errores = [], []
+    with ThreadPoolExecutor(max_workers=40) as executor:
+        future_to_est = {
+            executor.submit(
+                inventarios_model.get_inventarios_turnos_estacion,
+                est["Servidor"], est["BaseDatos"], est["Codigo"], from_fch, until_fch
+            ): est
+            for est in estaciones
+        }
+        for future in as_completed(future_to_est):
+            est = future_to_est[future]
+            try:
+                filas = future.result()
+                resultados.append({"Codigo": est["Codigo"], "Nombre": est["Nombre"], "filas": filas})
+            except Exception as e:
+                errores.append({"Codigo": est["Codigo"], "Nombre": est["Nombre"], "error": str(e)})
+
+    return Response({
+        "resultados": resultados,
+        "errores": errores,
+        "duracion_seg": round(time.time() - inicio, 1),
+    }, status=status.HTTP_200_OK)

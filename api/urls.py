@@ -33,6 +33,7 @@ from .TG_php.views import (
     importar_factura_pdf,
     actualizar_ruta_factura,
     facturas_vencen_hoy,
+    inventarios_turnos_distribuido,
 )
 from .XmlCre.views import xmlCre
 
@@ -60,6 +61,7 @@ urlpatterns = [
     path('xmlCre/', xmlCre),
     path('inventarios/', inventarios_distribuido),
     path('inventarios/detalles/',  inventarios_detalles_distribuido),
+    path('inventarios_turnos/', inventarios_turnos_distribuido),
     path('tanques/estacion/', tanques_estacion),
     path('tanques/volumen/', volumen_tanque),
     path('tanques/volumen_date/', volumen_date),
