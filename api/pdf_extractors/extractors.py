@@ -661,10 +661,17 @@ def extract_with_profile_aemsa(doc: fitz.Document) -> Dict[str, Any]:
             data["Destino"] = m.group(1).strip()
 
     # === REMISIÓN ===
-    # Buscar en observaciones o en números de referencia
-    m = re.search(r'Observaciones[^\n]*\n[^\n]*?(\d{6,})', full_text, re.I)
+    # El número de remisión es el BOL (bill of lading):
+    #   formato nuevo: "BOL: 1471138 PD: 262417466000335"
+    #   formato viejo: "Bol: 559268" (dentro de Observaciones)
+    m = re.search(r'\bBOL:?\s*(\d+)', full_text, re.I)
     if m:
         data["Remision"] = m.group(1).strip()
+    else:
+        # Respaldo: primer número largo después de "Observaciones"
+        m = re.search(r'Observaciones[^\n]*\n[^\n]*?(\d{6,})', full_text, re.I)
+        if m:
+            data["Remision"] = m.group(1).strip()
 
     # --- Complemento de pago: marcar bandera si aplica ---
     # Señales del layout AEMSA (S100_S10014...): "Efecto comprobante: PAGO",
@@ -746,7 +753,7 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
             if m:
                 data["ReceptorNombre"] = m[-1].strip()
 
-    # === FOLIO === 
+    # === FOLIO ===  
     # Formato actual: "Folio" seguido en la línea siguiente por "E-#####" o "EF-##"
     m = re.search(r'\b([A-Z]{1,2}-\d+)\b', full_text)
     if m:

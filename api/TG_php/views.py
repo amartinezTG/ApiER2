@@ -1310,7 +1310,7 @@ def facturas_pendientes_backfill(request):
                   AND (
                         ISNULL(Folio, '') = '' OR Fecha IS NULL
                      OR ISNULL(FormaPago, '') = '' OR ISNULL(MetodoPago, '') = ''
-                     OR ISNULL(LugarExpedicion, '') = ''
+                     OR ISNULL(LugarExpedicion, '') = '' OR ISNULL(Remision, '') = ''
                      OR ISNULL(SubTotal, 0) = 0 OR ISNULL(Total, 0) = 0
                   )
                 ORDER BY Id DESC
@@ -1467,7 +1467,7 @@ def importar_factura_pdf(request):
         advertencia = (
             "Factura importada con SubTotal/Total en 0 — revisar el PDF manualmente."
             if sigue_incompleta else None
-        ) 
+        )  
 
         if factura_existente:
             # Factura incompleta (Total/SubTotal en 0), con campos clave vacíos que la

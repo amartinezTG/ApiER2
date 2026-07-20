@@ -17,7 +17,7 @@ INSERT_FACTURA = """
         FechaTimbrado, UUID, Destino, Remision,
         RutaArchivo, NombreArchivo
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-"""
+""" 
 
 INSERT_CONCEPTO = """
     INSERT INTO [TG].[dbo].[FacturasRecibidasConceptos]
@@ -40,7 +40,7 @@ UPDATE_FACTURA = """
 class ImportadorFacturas:
     # Campos de cabecera que, si están vacíos en BD pero la nueva extracción
     # los trae, justifican actualizar una factura ya importada.
-    CAMPOS_CLAVE = ["Folio", "Fecha", "FormaPago", "MetodoPago", "LugarExpedicion"]
+    CAMPOS_CLAVE = ["Folio", "Fecha", "FormaPago", "MetodoPago", "LugarExpedicion", "Remision"]
 
     def __init__(self):
         self.conn_str = CONTROLGASTG_CONN_STR
@@ -60,7 +60,7 @@ class ImportadorFacturas:
         with pyodbc.connect(self.conn_str) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT Id, SubTotal, Total, Folio, Fecha, FormaPago, MetodoPago, LugarExpedicion "
+                "SELECT Id, SubTotal, Total, Folio, Fecha, FormaPago, MetodoPago, LugarExpedicion, Remision "
                 "FROM FacturasRecibidas WHERE UUID = ?", (uuid,)
             )
             row = cursor.fetchone()
@@ -69,7 +69,7 @@ class ImportadorFacturas:
             return {
                 "Id": row[0], "SubTotal": row[1], "Total": row[2],
                 "Folio": row[3], "Fecha": row[4], "FormaPago": row[5],
-                "MetodoPago": row[6], "LugarExpedicion": row[7],
+                "MetodoPago": row[6], "LugarExpedicion": row[7], "Remision": row[8],
             }
 
     def factura_incompleta(self, factura: Dict[str, Any]) -> bool:
