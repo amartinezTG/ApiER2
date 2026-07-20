@@ -1274,7 +1274,63 @@ def actualizar_ruta_factura(request):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
- 
+
+@api_view(['GET'])
+def facturas_pendientes_backfill(request):
+    """
+    Lista facturas ya importadas a las que les falta algún campo clave de
+    cabecera (Folio, Fecha, FormaPago, MetodoPago, LugarExpedicion) o que
+    quedaron con montos en 0. El script backfill_faltantes.py (servidor de
+    tareas programadas) usa esta lista para re-enviar los PDFs archivados a
+    /api/importar_factura_pdf/ y completar los huecos.
+
+    Query params:
+      rfc    (obligatorio) — EmisorRfc del proveedor, p.ej. AEM160511LMA
+      limit  (opcional)    — máximo de filas a devolver (default 500)
+    """
+    rfc = (request.query_params.get('rfc') or '').strip()
+    try:
+        limit = min(int(request.query_params.get('limit', 500)), 2000)
+    except ValueError:
+        limit = 500
+
+    if not rfc:
+        return Response({"detail": "Falta el parámetro rfc."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        import pyodbc
+        from api.db_connections import CONTROLGASTG_CONN_STR
+        with pyodbc.connect(CONTROLGASTG_CONN_STR) as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                SELECT TOP {limit} Id, UUID, Folio, RutaArchivo, NombreArchivo
+                FROM FacturasRecibidas
+                WHERE EmisorRfc = ?
+                  AND ISNULL(RutaArchivo, '') <> ''
+                  AND (
+                        ISNULL(Folio, '') = '' OR Fecha IS NULL
+                     OR ISNULL(FormaPago, '') = '' OR ISNULL(MetodoPago, '') = ''
+                     OR ISNULL(LugarExpedicion, '') = ''
+                     OR ISNULL(SubTotal, 0) = 0 OR ISNULL(Total, 0) = 0
+                  )
+                ORDER BY Id DESC
+            """, (rfc,))
+            filas = [
+                {
+                    "factura_id": r[0], "uuid": r[1], "folio": r[2],
+                    "ruta_archivo": r[3], "nombre_archivo": r[4],
+                }
+                for r in cursor.fetchall()
+            ]
+        return Response({"total": len(filas), "facturas": filas}, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error en facturas_pendientes_backfill: {e}", exc_info=True)
+        return Response(
+            {"detail": f"Error al listar pendientes: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 @api_view(['POST'])
 @parser_classes([MultiPartParser])
 def importar_factura_pdf(request):
@@ -1377,8 +1433,13 @@ def importar_factura_pdf(request):
         # --- Verificar duplicado por UUID ---
         importador = ImportadorFacturas()
         factura_existente = importador.obtener_factura_por_uuid(uuid) if uuid else None
+        campos_completables = (
+            importador.campos_completables(factura_existente, datos)
+            if factura_existente else []
+        )
 
-        if factura_existente and not importador.factura_incompleta(factura_existente) and not forzar:
+        if (factura_existente and not importador.factura_incompleta(factura_existente)
+                and not campos_completables and not forzar):
             return Response({
                 "estado": "duplicada",
                 "factura_id": None,
@@ -1406,11 +1467,11 @@ def importar_factura_pdf(request):
         advertencia = (
             "Factura importada con SubTotal/Total en 0 — revisar el PDF manualmente."
             if sigue_incompleta else None
-        )
- 
+        ) 
+
         if factura_existente:
-            # Factura incompleta (Total/SubTotal en 0) o actualización forzada por el usuario:
-            # actualizar en vez de insertar.
+            # Factura incompleta (Total/SubTotal en 0), con campos clave vacíos que la
+            # extracción nueva sí trae, o actualización forzada: actualizar en vez de insertar.
             factura_id = factura_existente["Id"]
             era_incompleta = importador.factura_incompleta(factura_existente)
             total_anterior = factura_existente.get("Total")
@@ -1423,6 +1484,10 @@ def importar_factura_pdf(request):
 
             if era_incompleta:
                 mensaje = f"Factura incompleta corregida. ID={factura_id}, {conceptos_insertados} concepto(s)."
+            elif campos_completables:
+                mensaje = (
+                    f"Campos completados: {', '.join(campos_completables)}. ID={factura_id}."
+                )
             else:
                 mensaje = (
                     f"Actualización forzada. ID={factura_id}. "
@@ -1436,7 +1501,7 @@ def importar_factura_pdf(request):
                 "proveedor": proveedor,
                 "conceptos_insertados": conceptos_insertados,
                 "advertencia": advertencia,
-                "forzado": not era_incompleta,
+                "forzado": not era_incompleta and not campos_completables,
                 "total_anterior": str(total_anterior) if total_anterior is not None else None,
                 "total_nuevo": str(datos.get('Total')) if datos.get('Total') is not None else None,
                 "mensaje": mensaje

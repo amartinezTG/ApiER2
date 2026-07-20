@@ -18,7 +18,7 @@ INSERT_FACTURA = """
         RutaArchivo, NombreArchivo
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
- 
+
 INSERT_CONCEPTO = """
     INSERT INTO [TG].[dbo].[FacturasRecibidasConceptos]
     ([FacturaId],[Cantidad],[ClaveProdServ],[ClaveUnidad],[Descripcion],
@@ -38,6 +38,10 @@ UPDATE_FACTURA = """
 
 
 class ImportadorFacturas:
+    # Campos de cabecera que, si están vacíos en BD pero la nueva extracción
+    # los trae, justifican actualizar una factura ya importada.
+    CAMPOS_CLAVE = ["Folio", "Fecha", "FormaPago", "MetodoPago", "LugarExpedicion"]
+
     def __init__(self):
         self.conn_str = CONTROLGASTG_CONN_STR
 
@@ -52,22 +56,41 @@ class ImportadorFacturas:
             return count > 0
 
     def obtener_factura_por_uuid(self, uuid: str) -> Optional[Dict[str, Any]]:
-        """Devuelve Id, SubTotal y Total de la factura con ese UUID, o None si no existe."""
+        """Devuelve la cabecera resumida de la factura con ese UUID, o None si no existe."""
         with pyodbc.connect(self.conn_str) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT Id, SubTotal, Total FROM FacturasRecibidas WHERE UUID = ?", (uuid,)
+                "SELECT Id, SubTotal, Total, Folio, Fecha, FormaPago, MetodoPago, LugarExpedicion "
+                "FROM FacturasRecibidas WHERE UUID = ?", (uuid,)
             )
             row = cursor.fetchone()
             if not row:
                 return None
-            return {"Id": row[0], "SubTotal": row[1], "Total": row[2]}
+            return {
+                "Id": row[0], "SubTotal": row[1], "Total": row[2],
+                "Folio": row[3], "Fecha": row[4], "FormaPago": row[5],
+                "MetodoPago": row[6], "LugarExpedicion": row[7],
+            }
 
     def factura_incompleta(self, factura: Dict[str, Any]) -> bool:
         """Una factura se considera incompleta si su SubTotal o Total quedaron en 0."""
         subtotal = factura.get("SubTotal") or Decimal("0")
         total = factura.get("Total") or Decimal("0")
         return subtotal == 0 or total == 0
+
+    def campos_completables(self, factura_bd: Dict[str, Any], datos: Dict[str, Any]) -> List[str]:
+        """
+        Campos clave vacíos en la factura de BD que la extracción nueva sí trae.
+        Si la extracción tampoco los trae, no cuentan: así los proveedores cuyo
+        PDF no incluye un campo siguen respondiendo 'duplicada' sin re-actualizar
+        en cada corrida.
+        """
+        completables = []
+        for campo in self.CAMPOS_CLAVE:
+            vacio_en_bd = not (str(factura_bd.get(campo) or "").strip()) if campo != "Fecha" else factura_bd.get("Fecha") is None
+            if vacio_en_bd and datos.get(campo):
+                completables.append(campo)
+        return completables
 
     def tiene_conceptos(self, factura_id: int) -> bool:
         """Verifica si la factura ya tiene conceptos insertados."""

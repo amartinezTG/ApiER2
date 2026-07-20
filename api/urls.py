@@ -32,9 +32,10 @@ from .TG_php.views import (
     compras_estadisticas,
     importar_factura_pdf,
     actualizar_ruta_factura,
+    facturas_pendientes_backfill,
     facturas_vencen_hoy,
     inventarios_turnos_distribuido, 
-) 
+)
 from .XmlCre.views import xmlCre
 
  
@@ -75,5 +76,6 @@ urlpatterns = [
     path('compras_estadisticas/', compras_estadisticas),
     path('importar_factura_pdf/', importar_factura_pdf),
     path('actualizar_ruta_factura/', actualizar_ruta_factura),
+    path('facturas_pendientes_backfill/', facturas_pendientes_backfill),
     path('facturas_vencen_hoy/', facturas_vencen_hoy),
 ]
