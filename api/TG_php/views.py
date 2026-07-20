@@ -1471,9 +1471,9 @@ def importar_factura_pdf(request):
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
-
+  
 @api_view(['POST'])
-def inventarios_turnos_distribuido(request):
+def inventarios_turnos_distribuido(request): 
     """
     Inventarios por TURNO de todas las estaciones en paralelo (merma diaria).
     Fechas YYYY-MM-DD -> serial ControlGas (días desde 1899-12-31, como

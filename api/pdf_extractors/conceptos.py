@@ -597,10 +597,12 @@ def extraer_conceptos_aemsa(path_pdf: Path) -> List[Dict[str, Any]]:
     except Exception:
         return cpts
     
+    full_text = ""
     with pdfplumber.open(str(path_pdf)) as pdf:
         for page in pdf.pages:
             page_text = page.extract_text() or ""
-            
+            full_text += page_text + "\n"
+
             # Buscar líneas que contengan conceptos de combustible
             # Patrón: CANTIDAD CLAVE UDM DESCRIPCION OBJ PRECIO IMPORTE IVA
             # Ejemplo: 15459 15101514 LTR GASOLINA REGULAR 02 $18.914799 $292,403.88 $45,375.27
@@ -645,7 +647,21 @@ def extraer_conceptos_aemsa(path_pdf: Path) -> List[Dict[str, Any]]:
                     "Unidad": clave_unidad,
                     "ImporteImpuesto": iva_importe
                 })
-    
+
+    # La base gravable del IVA en combustibles es menor al importe (la cuota IEPS
+    # no es objeto de IVA), así que se toma del desglose de impuestos:
+    #   "Trasladado 002 - IVA Tasa $432,926.23 0.16 $69,268.20"
+    # Solo con un concepto único; con varios no hay forma de repartir el desglose global.
+    if len(cpts) == 1:
+        m = re.search(
+            r'Trasladado\s+002\s*-\s*IVA\s+Tasa\s+\$([0-9,.]+)\s+([0-9.]+)\s+\$([0-9,.]+)',
+            full_text, re.I
+        )
+        if m:
+            cpts[0]["Base"] = _to_dec(m.group(1), prec=6)
+            cpts[0]["TasaOCuota"] = _to_dec(m.group(2), prec=6)
+            cpts[0]["ImporteImpuesto"] = _to_dec(m.group(3), prec=6)
+
     return cpts
 def extraer_conceptos_enerey(path_pdf: Path) -> List[Dict[str, Any]]:
     """

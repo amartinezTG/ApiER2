@@ -33,11 +33,11 @@ from .TG_php.views import (
     importar_factura_pdf,
     actualizar_ruta_factura,
     facturas_vencen_hoy,
-    inventarios_turnos_distribuido,
-)
+    inventarios_turnos_distribuido, 
+) 
 from .XmlCre.views import xmlCre
 
-  
+ 
 urlpatterns = [
     # path('concentrado-og/', concentrado_og_view),
     path('concentrado-resultados/', concentrado_resultados_view),

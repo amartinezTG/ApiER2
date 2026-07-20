@@ -452,13 +452,13 @@ class InventariosEstaciones:
                             value = value.strftime('%H:%M:%S')
                         row_dict[col] = value
                     results.append(row_dict)
-                
+
                 return results
-                
+
         except Exception as e:
             logger.error(f"Error obteniendo volumen tanque {codigo_tanque}: {str(e)}")
             print(f"Error: {e}")
-            return []
+            return [] 
     def get_consolidado_tanques(self, servidor, base_datos, codigo_estacion, from_date, until_date):
         """
         Obtiene reporte consolidado de máximos y mínimos de todos los tanques de una estación

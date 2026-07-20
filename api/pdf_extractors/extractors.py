@@ -588,7 +588,8 @@ def extract_with_profile_aemsa(doc: fitz.Document) -> Dict[str, Any]:
                 data["FechaTimbrado"] = parse_iso_datetime(fecha_iso)
 
     # === LUGAR EXPEDICIÓN ===
-    m = re.search(r'Lugar\s+de\s+Expedicion\s+(\d{5})', full_text, re.I)
+    # Formato antiguo: "Lugar de Expedicion 76100". Formato nuevo: "Lugar de Expedicion: 76100"
+    m = re.search(r'Lugar\s+de\s+Expedicion:?\s*(\d{5})', full_text, re.I)
     if m:
         data["LugarExpedicion"] = m.group(1).strip()
 
@@ -599,11 +600,17 @@ def extract_with_profile_aemsa(doc: fitz.Document) -> Dict[str, Any]:
 
     # === FORMA DE PAGO ===
     m = re.search(r'FORMA\s+DE\s+PAGO:\s*([^\r\n]+?)(?=\s*METODO\s+DE\s+PAGO)', full_text, re.I)
+    if not m:
+        # Formato nuevo: "Forma de pago: 99 - Por definir" y la siguiente línea es Moneda
+        m = re.search(r'FORMA\s+DE\s+PAGO:\s*([^\r\n]+)', full_text, re.I)
     if m:
         data["FormaPago"] = m.group(1).strip()
 
     # === MÉTODO DE PAGO ===
     m = re.search(r'METODO\s+DE\s+PAGO:\s*([^\r\n]+?)(?=\s*MONEDA)', full_text, re.I)
+    if not m:
+        # Formato nuevo: Moneda aparece ANTES de "Metodo de pago: PPD"
+        m = re.search(r'METODO\s+DE\s+PAGO:\s*([^\r\n]+)', full_text, re.I)
     if m:
         data["MetodoPago"] = m.group(1).strip()
 
@@ -658,6 +665,17 @@ def extract_with_profile_aemsa(doc: fitz.Document) -> Dict[str, Any]:
     m = re.search(r'Observaciones[^\n]*\n[^\n]*?(\d{6,})', full_text, re.I)
     if m:
         data["Remision"] = m.group(1).strip()
+
+    # --- Complemento de pago: marcar bandera si aplica ---
+    # Señales del layout AEMSA (S100_S10014...): "Efecto comprobante: PAGO",
+    # "Uso CFDI: CP01" o la sección "Informacion del Pago".
+    is_pago = False
+    if (re.search(r'Efecto\s+comprobante:\s*PAGO\b', full_text, re.I) or
+        re.search(r'Uso\s+(?:del\s+)?CFDI:\s*CP01\b', full_text, re.I) or
+        re.search(r'Informacion\s+del\s+Pago', full_text, re.I)):
+        is_pago = True
+    data["__is_pago"] = is_pago
+    data["__is_nota_credito"] = data.get("TipoDeComprobante", "").upper() == "E"
 
     # Normalizaciones finales
     data["FormaPago"] = _solo_numeros_forma_pago(data["FormaPago"])
@@ -728,7 +746,7 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
             if m:
                 data["ReceptorNombre"] = m[-1].strip()
 
-    # === FOLIO ===
+    # === FOLIO === 
     # Formato actual: "Folio" seguido en la línea siguiente por "E-#####" o "EF-##"
     m = re.search(r'\b([A-Z]{1,2}-\d+)\b', full_text)
     if m:
