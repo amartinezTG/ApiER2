@@ -152,11 +152,16 @@ def extraer_conceptos_lobo_por_tabla(path_pdf: Path) -> List[Dict[str, Any]]:
                     if iva_importe is None:
                         iva_importe = (base * tasa).quantize(Decimal('1.000000'))
 
+                    # Solo la primera línea como descripción: el resto del bloque
+                    # (FACTURA PROVEEDOR, BOL, embarque, impuestos) son metadatos
+                    # que ya se extraen por separado arriba.
+                    desc_corta = desc.split("\n")[0].strip()
+
                     conceptos.append({
                         "Cantidad": cantidad.quantize(Decimal('1.0000')) if isinstance(cantidad, Decimal) else Decimal('0.0000'),
                         "ClaveProdServ": cps,
                         "ClaveUnidad": "LTR",
-                        "Descripcion": desc,
+                        "Descripcion": desc_corta or desc,
                         "ValorUnitario": valor_unitario.quantize(Decimal('1.000000')) if isinstance(valor_unitario, Decimal) else Decimal('0.000000'),
                         "Importe": importe.quantize(Decimal('1.00')) if isinstance(importe, Decimal) else Decimal('0.00'),
                         "NoIdentificacion": no_id,
@@ -317,11 +322,24 @@ def extraer_conceptos_mcg_desde_cadena(full_text: str) -> List[Dict[str, Any]]:
                     # Normalizar unidad
                     if unidad in ("L", "LT"):
                         unidad = "LTR"
-                    
+
+                    # La cadena original puede traer saltos de línea ("PEMEX\nMAGNA")
+                    descripcion = re.sub(r'\s+', ' ', descripcion).strip()
+
+                    # ClaveProdServ SAT por producto (el XML de MCG usa estas)
+                    desc_up = descripcion.upper()
+                    clave_prod_serv = None
+                    for palabra, clave in (("MAGNA", "15101514"), ("REGULAR", "15101514"),
+                                           ("PREMIUM", "15101515"), ("DIESEL", "15101505"),
+                                           ("SERVICIO", "80141629")):
+                        if palabra in desc_up:
+                            clave_prod_serv = clave
+                            break
+
                     # Crear el concepto
                     concepto = {
                         "Cantidad": cantidad,
-                        "ClaveProdServ": None,
+                        "ClaveProdServ": clave_prod_serv,
                         "ClaveUnidad": unidad,
                         "Descripcion": descripcion,
                         "ValorUnitario": precio_unitario,
@@ -803,8 +821,12 @@ def extraer_conceptos_essafuel(path_pdf: Path) -> List[Dict[str, Any]]:
             # Patrón mejorado para capturar conceptos con más flexibilidad
             # ClaveProd Cantidad Unidad No.Ident Descripción Valor$ 002 IVA $IVA $Importe
             
-            # Patrón 1: Con todas las columnas presentes
-            pattern1 = r'(\d{8})\s+([0-9,]+\.\d+)\s+(LTR|ACT|H87|E48)\s+([A-Z0-9/]+)\s+(.+?)\s+\$([0-9,]+\.\d+)\s+002\s+IVA\s+\$([0-9,]+\.\d+)\s+\$([0-9,]+\.\d+)'
+            # Patrón 1: Con todas las columnas presentes.
+            # pdfplumber puede pegar el precio con el código de impuesto
+            # ("$21.545617002 IVA"), por eso el precio se limita a 6 decimales
+            # y el espacio antes de "002" es opcional. El No. de Identificación
+            # puede traer sufijo "- 5913" (permiso - folio).
+            pattern1 = r'(\d{8})\s+([0-9,]+\.\d+)\s+(LTR|ACT|H87|E48)\s+([A-Z0-9/]+(?:\s*-\s*\d+)?)\s+(.+?)\s+\$([0-9,]+\.\d{6})\s*002\s+IVA\s+\$([0-9,]+\.\d+)\s+\$([0-9,]+\.\d+)'
             
             for match in re.finditer(pattern1, page_text):
                 clave_prod_serv = match.group(1)
@@ -823,20 +845,15 @@ def extraer_conceptos_essafuel(path_pdf: Path) -> List[Dict[str, Any]]:
                 # Calcular base e IVA si es necesario
                 base = importe
                 tasa = Decimal('0.160000')  # IVA 16% estándar
-                
-                # Si el IVA parece ser 8%, ajustar
+
+                # Si el IVA parece ser 8%, ajustar (región fronteriza)
                 if iva_importe > 0 and base > 0:
                     tasa_calculada = (iva_importe / base).quantize(Decimal('0.000001'))
                     if Decimal('0.070000') < tasa_calculada < Decimal('0.090000'):
                         tasa = Decimal('0.080000')
-                
-                # Validar que IVA calculado coincida (aproximadamente)
-                iva_calculado = (base * tasa).quantize(Decimal('1.00'))
-                diferencia = abs(iva_importe - iva_calculado)
-                
-                if diferencia > Decimal('1.00'):
-                    # Si hay diferencia significativa, usar el IVA del PDF
-                    pass
+                    # La base gravable real se deriva del IVA (la cuota IEPS
+                    # del combustible no es objeto de IVA, base < importe)
+                    base = (iva_importe / tasa).quantize(Decimal('1.000000'))
                 
                 cpts.append({
                     "Cantidad": cantidad,

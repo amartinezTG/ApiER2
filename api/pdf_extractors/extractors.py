@@ -198,6 +198,22 @@ def extract_with_profile_lobo(doc: fitz.Document) -> Dict[str, Any]:
             # Eliminar texto después de PIPA, SELLOS, PERMISO
             destino_clean = re.split(r'\s+(?:PIPA|SELLOS|PERMISO)', destino_raw, maxsplit=1)[0]
             data["Destino"] = destino_clean.strip()
+
+    # === REMISIÓN ===
+    # El número de remisión es el BOL, viene dentro de la descripción del
+    # concepto: "BOL: 1110723"
+    m = re.search(r'\bBOL:?\s*(\d+)', full_text, re.I)
+    if m:
+        data["Remision"] = m.group(1).strip()
+
+    # --- Complemento de pago / nota de crédito: marcar banderas ---
+    tipo = (data.get("TipoDeComprobante") or "").upper()
+    data["__is_pago"] = bool(
+        tipo == "P"
+        or re.search(r'Complemento\s+de\s+Pago', full_text, re.I)
+    )
+    data["__is_nota_credito"] = tipo == "E"
+
     # Normalizaciones finales
     data["FormaPago"] = _solo_numeros_forma_pago(data["FormaPago"])
     data["MetodoPago"] = _solo_siglas_metodo_pago(data["MetodoPago"])
@@ -367,15 +383,36 @@ def extract_with_profile_mcg(doc: fitz.Document) -> Dict[str, Any]:
 
     data["__is_pago"] = is_pago
     
-    # === FORMA DE PAGO - corregido ===
-    m = re.search(r'Forma\s+de\s+pago\s+(?:Lugar[^\n]*\n)?(\d{2})', full_text, re.I|re.DOTALL)
+    # === RÉGIMEN / MÉTODO / FORMA / LUGAR (bloque de etiquetas) ===
+    # Layout actual de MCG: las 4 etiquetas vienen juntas y después los 4
+    # valores en el mismo orden:
+    #   "Regimen Fiscal\nMetodo de pago\nForma de pago\nLugar de expedicion\n
+    #    601\nPPD\n99\n11320"
+    # Los regex viejos leían valores de la etiqueta equivocada (FormaPago="60"
+    # del régimen 601, MetodoPago="lug" de "Lugar...") — de ahí la basura en BD.
+    m = re.search(
+        r'Regimen\s+Fiscal\s*\nMetodo\s+de\s+pago\s*\nForma\s+de\s+pago\s*\n'
+        r'Lugar\s+de\s+expedicion\s*\n(\d{3})\s*\n([A-Za-z]{3})\s*\n(\d{2})\s*\n(\d{5})',
+        full_text, re.I
+    )
     if m:
-        data["FormaPago"] = m.group(1).strip()
-    
-    # === MÉTODO DE PAGO - corregido ===
-    m = re.search(r'Metodo\s+de\s+pago\s+(?:Forma[^\n]*\n)?([A-Z]{3})', full_text, re.I|re.DOTALL)
-    if m:
-        data["MetodoPago"] = m.group(1).strip()
+        if not data["EmisorRegimenFiscal"]:
+            data["EmisorRegimenFiscal"] = m.group(1)
+        data["MetodoPago"] = m.group(2)
+        data["FormaPago"] = m.group(3)
+        data["LugarExpedicion"] = m.group(4)
+
+    # === FORMA DE PAGO (respaldo por cercanía; \b evita leer "60" de "601") ===
+    if not data["FormaPago"]:
+        m = re.search(r'Forma\s+de\s+pago[\s\S]{0,60}?\b(\d{2})\b', full_text, re.I)
+        if m:
+            data["FormaPago"] = m.group(1).strip()
+
+    # === MÉTODO DE PAGO (respaldo; en CFDI solo existe PPD o PUE) ===
+    if not data["MetodoPago"]:
+        m = re.search(r'Metodo\s+de\s+pago[\s\S]{0,60}?\b(PPD|PUE)\b', full_text, re.I)
+        if m:
+            data["MetodoPago"] = m.group(1).strip()
     
     # === MONEDA ===
     m = re.search(r'Total\s+[0-9,]+\.\d+\s+[A-Z]+\s+[0-9,]+\.\d+\s+([A-Z]{3})', full_text, re.I)
@@ -416,6 +453,9 @@ def extract_with_profile_mcg(doc: fitz.Document) -> Dict[str, Any]:
             if m_destino:
                 data["Destino"] = m_destino.group(1).strip()
     # Normalizaciones finales
+    # Los nombres pueden traer saltos de línea del PDF ("MGC\nMEXICO")
+    data["EmisorNombre"] = re.sub(r'\s+', ' ', data["EmisorNombre"]).strip()
+    data["ReceptorNombre"] = re.sub(r'\s+', ' ', data["ReceptorNombre"]).strip()
     data["FormaPago"] = _solo_numeros_forma_pago(data["FormaPago"])
     data["MetodoPago"] = _solo_siglas_metodo_pago(data["MetodoPago"])
     data["Moneda"] = _moneda_3c(data["Moneda"])
@@ -714,7 +754,7 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
         re.search(r'Estatus\s+UUID:\s*Cancelado', full_text, re.I)):
         data["__is_cancelada"] = True
         return data  # Retornar inmediatamente sin extraer más datos
-
+ 
     # === EMISOR - HARDCODEADO (viene como imagen) ===
     data["EmisorNombre"] = "ENEREY LATINOAMERICA"
     data["EmisorRFC"] = "SGE151215F71"
@@ -724,7 +764,7 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
     if m:
         data["EmisorRFC"] = m.group(1).strip()
 
-    # Régimen Fiscal
+    # Régimen Fiscal  
     m = re.search(r'Regimen\s+fiscal\s+emisor:\s*(\d{3})', full_text, re.I)
     if m:
         data["EmisorRegimenFiscal"] = m.group(1).strip()
@@ -1281,6 +1321,18 @@ def extract_with_profile_essafuel(doc: fitz.Document) -> Dict[str, Any]:
         m = re.search(r'DODA:\s*(\d+)', full_text, re.I)
         if m:
             data["Remision"] = m.group(1).strip()
+
+    # --- Complemento de pago / nota de crédito: marcar banderas ---
+    # Los complementos ESSAFUEL (folios ESSAFFP-#### / EFAG-###) traen
+    # "Tipo Comprobante: P - Pago" y el monto del pago; sin bandera se
+    # importaban como facturas con Total > 0.
+    tipo = (data.get("TipoDeComprobante") or "").upper()
+    data["__is_pago"] = bool(
+        tipo == "P"
+        or re.search(r'Tipo\s+Comprobante:\s*P\b', full_text, re.I)
+        or re.search(r'Complemento\s+de\s+Pago', full_text, re.I)
+    )
+    data["__is_nota_credito"] = tipo == "E"
 
     # Normalizaciones finales
     data["FormaPago"] = _solo_numeros_forma_pago(data["FormaPago"])
