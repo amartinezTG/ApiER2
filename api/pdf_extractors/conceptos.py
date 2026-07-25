@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Dict, Any, List
 
 from .utils import _strip_diacritics, _to_dec, _clean
-
+ 
 
 def extraer_conceptos_lobo_por_tabla(path_pdf: Path) -> List[Dict[str, Any]]:
     """
@@ -21,7 +21,7 @@ def extraer_conceptos_lobo_por_tabla(path_pdf: Path) -> List[Dict[str, Any]]:
         import pdfplumber
     except Exception:
         return conceptos
-  
+
     def norm(s: Any) -> str:
         return _strip_diacritics((s or "")).strip().upper()
 
@@ -489,11 +489,17 @@ def extraer_conceptos_tesoro(path_pdf: Path) -> List[Dict[str, Any]]:
         "IMPORTE": "Importe",
     }
 
-    def N(s): return _strip_diacritics((s or "")).strip().upper()
+    # Los encabezados vienen con saltos de línea ("CLAVE\nPROD/SERV"): se
+    # colapsa el whitespace para que los alias de varias palabras matcheen.
+    # Sin esto, el alias genérico "CLAVE" mapeaba la columna CLAVE UNIDAD
+    # encima de CLAVE PROD/SERV y la clave quedaba como "LTR".
+    def N(s): return re.sub(r'\s+', ' ', _strip_diacritics((s or ""))).strip().upper()
 
+    texto_paginas = ""
     with pdfplumber.open(str(path_pdf)) as pdf:
         for page in pdf.pages:
             page_text = (page.extract_text() or "")
+            texto_paginas += page_text + "\n"
             tables = page.extract_tables({"vertical_strategy":"lines","horizontal_strategy":"lines"}) or page.extract_tables()
             for t in (tables or []):
                 if not t:
@@ -586,7 +592,10 @@ def extraer_conceptos_tesoro(path_pdf: Path) -> List[Dict[str, Any]]:
                         "Cantidad": cantidad,
                         "ClaveProdServ": d.get("ClaveProdServ") or "15101505",
                         "ClaveUnidad": clave_unidad,
-                        "Descripcion": d.get("Descripcion") or "",
+                        "Descripcion": re.split(
+                            r'\s*(?:COMPL)?EMENTO\s+CONCEPTO',
+                            re.sub(r'\s+', ' ', d.get("Descripcion") or "").strip()
+                        )[0].strip(),
                         "ValorUnitario": vunit,             # <- ya NO quedará en 0
                         "Importe": importe,
                         "NoIdentificacion": "",
@@ -598,6 +607,32 @@ def extraer_conceptos_tesoro(path_pdf: Path) -> List[Dict[str, Any]]:
                         "Unidad": unidad,
                         "ImporteImpuesto": iva
                     })
+
+    # --- IVA real prorrateado ---
+    # El IVA por concepto no viene en la tabla; el total sí, en el resumen
+    # ("IMPUESTOS TRASLADADOS: 44,639.55"). La base gravable excluye IEPS y
+    # Tesoro factura zonas fronterizas con 8%, así que asumir base=importe con
+    # 16% inflaba el impuesto. Se prorratea el total por importe y la base se
+    # deriva como iva/tasa.
+    if cpts:
+        from decimal import Decimal
+        # pdfplumber puede intercalar el valor entre las palabras de la etiqueta
+        # ("IMPUESTOS\n44,639.55\nTRASLADADOS:"), de ahí los respaldos.
+        m = (re.search(r'IMPUESTOS\s+TRASLADADOS:\s*([0-9,]+\.\d+)', texto_paginas, re.I)
+             or re.search(r'IMPUESTOS\s*\n\s*([0-9,]+\.\d+)\s*\n\s*TRASLADADOS', texto_paginas, re.I)
+             or re.search(r'TRASLADOS\s+FEDERALES\s*\n[^\n]*?([0-9][0-9,]*\.\d+)\s*$', texto_paginas, re.I | re.M)
+             or re.search(r'IVA\s+Impuesto\s+Trasladado[^\n]*\n\s*([0-9,]+\.\d+)', texto_paginas, re.I))
+        if m:
+            iva_total = _to_dec(m.group(1), prec=2)
+            suma_importes = sum((c["Importe"] for c in cpts), Decimal('0'))
+            if iva_total > 0 and suma_importes > 0:
+                ratio = iva_total / suma_importes
+                tasa_real = Decimal('0.080000') if ratio < Decimal('0.120000') else Decimal('0.160000')
+                for c in cpts:
+                    iva_i = (iva_total * c["Importe"] / suma_importes).quantize(Decimal('1.000000'))
+                    c["TasaOCuota"] = tasa_real
+                    c["ImporteImpuesto"] = iva_i
+                    c["Base"] = (iva_i / tasa_real).quantize(Decimal('1.000000'))
     return cpts
 
 def extraer_conceptos_aemsa(path_pdf: Path) -> List[Dict[str, Any]]:
@@ -793,6 +828,61 @@ def extraer_conceptos_enerey(path_pdf: Path) -> List[Dict[str, Any]]:
                     "ImporteImpuesto": iva_importe
                 })
 
+            # Formato 2026 (ALPHA ERP):
+            #   "20896.00 LITRO DIESEL-A DIESEL AUTOMOTRIZ $21.102196 $440,951.48"
+            # con la Clave SAT ("Clave SAT: 15101505 - ...") y el permiso
+            # (H/#####/COM/####) en líneas aparte.
+            if not cpts:
+                pattern_2026 = (
+                    r'([0-9,]+\.\d+)\s+(?:LITRO|LTR)\s+(\S+)\s+([A-Z][A-Z\s\-]*?)\s+'
+                    r'\$([0-9,.]+)\s+\$([0-9,.]+)'
+                )
+                for match in re.finditer(pattern_2026, page_text, re.I):
+                    cantidad = _to_dec(match.group(1), prec=4)
+                    codigo = match.group(2)
+                    descripcion = re.sub(r'\s+', ' ', match.group(3)).strip()
+                    valor_unitario = _to_dec(match.group(4), prec=6)
+                    importe = _to_dec(match.group(5), prec=2)
+
+                    clave_prod_serv = None
+                    m_clave = re.search(r'Clave\s+SAT:\s*(\d{8})', page_text, re.I)
+                    if m_clave:
+                        clave_prod_serv = m_clave.group(1)
+                    m_perm = re.search(r'(H/\d+/COM/\d{4})', page_text, re.I)
+                    no_ident = m_perm.group(1) if m_perm else codigo
+
+                    # IVA real del resumen; la base se deriva iva/tasa (la
+                    # cuota IEPS del combustible no es objeto de IVA)
+                    tasa = Decimal('0.160000')
+                    iva_importe = Decimal('0')
+                    m_iva = re.search(r'IVA:\s*\$?\s*([0-9,]+\.\d+)', page_text, re.I)
+                    if m_iva:
+                        iva_importe = _to_dec(m_iva.group(1), prec=6)
+                    if iva_importe > 0 and importe > 0:
+                        if (iva_importe / importe) < Decimal('0.120000'):
+                            tasa = Decimal('0.080000')
+                        base = (iva_importe / tasa).quantize(Decimal('1.000000'))
+                    else:
+                        base = importe
+                        iva_importe = (base * tasa).quantize(Decimal('1.000000'))
+
+                    cpts.append({
+                        "Cantidad": cantidad,
+                        "ClaveProdServ": clave_prod_serv,
+                        "ClaveUnidad": "LTR",
+                        "Descripcion": descripcion,
+                        "ValorUnitario": valor_unitario,
+                        "Importe": importe,
+                        "NoIdentificacion": no_ident,
+                        "ObjetoImp": "02",
+                        "Impuesto": "IVA",
+                        "TasaOCuota": tasa,
+                        "TipoFactor": "Tasa",
+                        "Base": base,
+                        "Unidad": "LTR",
+                        "ImporteImpuesto": iva_importe
+                    })
+
     return cpts
 
 
@@ -980,9 +1070,14 @@ def extraer_conceptos_premiergas(path_pdf: Path) -> List[Dict[str, Any]]:
                 if clave_unidad in ("L", "LT"):
                     clave_unidad = "LTR"
                 
-                # Calcular base e IVA
-                base = importe
+                # Calcular base e IVA. La base gravable se deriva del IVA real
+                # de la tabla (la cuota IEPS del combustible no es objeto de
+                # IVA, por eso base < importe).
                 tasa = (porcentaje_iva / Decimal('100')).quantize(Decimal('0.000000'))
+                if iva_importe > 0 and tasa > 0:
+                    base = (iva_importe / tasa).quantize(Decimal('1.000000'))
+                else:
+                    base = importe
                 
                 cpts.append({
                     "Cantidad": cantidad,

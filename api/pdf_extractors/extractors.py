@@ -745,7 +745,7 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
         "Destino": "",
         "Remision": ""
     }
-
+    
     full_text = _strip_diacritics(" ".join([p.get_text() or "" for p in doc]))
 
     # === DETECTAR FACTURA CANCELADA ===
@@ -758,7 +758,7 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
     # === EMISOR - HARDCODEADO (viene como imagen) ===
     data["EmisorNombre"] = "ENEREY LATINOAMERICA"
     data["EmisorRFC"] = "SGE151215F71"
-    
+
     # Intentar extraer RFC de la cadena original como respaldo (por si cambia)
     m = re.search(r'\b(SGE\d{6}[A-Z0-9]{3})\b', full_text, re.I)
     if m:
@@ -923,9 +923,15 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
         if m:
             data["FormaPago"] = m.group(1)
         else:
-            m = re.search(r'Forma\s+de\s+pago:?\s*([^\n]+)', full_text, re.I)
+            # Formato 2026: el valor viene ANTES de la etiqueta
+            # ("...\n99 - Por definir\nForma de pago:")
+            m = re.search(r'(\d{2})\s*-[^\n]*\n\s*Forma\s+de\s+pago:', full_text, re.I)
             if m:
-                data["FormaPago"] = m.group(1).strip()
+                data["FormaPago"] = m.group(1)
+            else:
+                m = re.search(r'Forma\s+de\s+pago:?\s*([^\n]+)', full_text, re.I)
+                if m:
+                    data["FormaPago"] = m.group(1).strip()
 
     # === MÉTODO DE PAGO ===
     # Formato actual: "Método de pago" (sin ':'); el valor "PPD - Pago..." puede
@@ -1158,6 +1164,14 @@ def extract_with_profile_tesoro(doc: fitz.Document) -> Dict[str, Any]:
         m_remision = re.search(r'Comprobante\s+de\s+Carga\s+(\d+)', full_text, re.I)
         if m_remision:
             data["Remision"] = m_remision.group(1).strip()
+
+    # --- Complemento de pago / nota de crédito: marcar banderas ---
+    tipo = (data.get("TipoDeComprobante") or "").upper()
+    data["__is_pago"] = bool(
+        tipo == "P"
+        or re.search(r'Complemento\s+de\s+Pago', full_text, re.I)
+    )
+    data["__is_nota_credito"] = tipo == "E"
 
     # Normalizaciones
     data["FormaPago"] = _solo_numeros_forma_pago(data["FormaPago"])
@@ -1428,7 +1442,12 @@ def extract_with_profile_premiergas(doc: fitz.Document) -> Dict[str, Any]:
         data["FechaTimbrado"] = parse_iso_datetime(fecha_iso)
 
     # === LUGAR EXPEDICIÓN ===
-    m = re.search(r'LUGAR\s+DE\s+EXPEDICION:\s*\(C\.P\.\)\s+(\d{5})', full_text, re.I)
+    # El CP puede venir después de la línea del Folio Fiscal:
+    # "LUGAR DE EXPEDICION: (C.P.)\nFolio Fiscal: dd19dc5f-...\n81910"
+    m = re.search(
+        r'LUGAR\s+DE\s+EXPEDICION:?\s*\(C\.P\.\)\s*(?:Folio\s+Fiscal:[^\n]*\n)?\s*(\d{5})',
+        full_text, re.I
+    )
     if m:
         data["LugarExpedicion"] = m.group(1).strip()
 
@@ -1474,6 +1493,11 @@ def extract_with_profile_premiergas(doc: fitz.Document) -> Dict[str, Any]:
     m = re.search(r'(RP-\d+)', full_text, re.I)
     if m:
         data["Remision"] = m.group(1).strip()
+
+    # --- Complemento de pago / nota de crédito: marcar banderas ---
+    # (Premiergas históricamente solo manda facturas I, pero por si acaso)
+    data["__is_pago"] = bool(re.search(r'Complemento\s+de\s+Pago', full_text, re.I))
+    data["__is_nota_credito"] = bool(re.search(r'Tipo\s+de\s+Comprobante:?\s*E\b|NOTA\s+DE\s+CREDITO', full_text, re.I))
 
     # Normalizaciones finales
     data["FormaPago"] = _solo_numeros_forma_pago(data["FormaPago"])
