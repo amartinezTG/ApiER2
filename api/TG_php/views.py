@@ -1616,7 +1616,12 @@ def exchange_rates_view(request):
             for est in estaciones
         }
         for future in as_completed(future_to_est):
-            res = future.result()
+            est = future_to_est[future]
+            try:
+                res = future.result()
+            except Exception as e:
+                print(f"exchange_rates_view: error en estacion {est.get('codgas')}: {e}")
+                continue
             if res:
                 resultados.append(res)
     return Response(resultados, status=status.HTTP_200_OK)
