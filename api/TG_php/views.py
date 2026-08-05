@@ -9,6 +9,7 @@ from api.modelos.Documentos_estaciones import DocumentosEstaciones
 from api.modelos.inventarios_estaciones import InventariosEstaciones
 from api.modelos.Facturas_Recibidas import FacturasRecibidas
 from api.modelos.ImportadorFacturas import ImportadorFacturas
+from api.modelos.cotizaciones_estaciones import CotizacionesEstaciones
 import logging
 from collections import defaultdict
 import json
@@ -1590,3 +1591,32 @@ def inventarios_turnos_distribuido(request):
         "errores": errores,
         "duracion_seg": round(time.time() - inicio, 1),
     }, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+def exchange_rates_view(request):
+    try:
+        payload = json.loads(request.body)
+    except (ValueError, TypeError):
+        return Response({"detail": "Body inválido, se esperaba JSON"}, status=status.HTTP_400_BAD_REQUEST)
+
+    estaciones = payload.get('estaciones', [])
+    if not estaciones:
+        return Response({"detail": "Falta la lista de estaciones"}, status=status.HTTP_400_BAD_REQUEST)
+
+    cotizaciones = CotizacionesEstaciones()
+    resultados = []
+    with ThreadPoolExecutor(max_workers=40) as executor:
+        future_to_est = {
+            executor.submit(
+                cotizaciones.get_last_exchange,
+                est["linked_server"], est["short_db"], est["codgas"],
+                est["station_name"], est["no_station"], est["description"]
+            ): est
+            for est in estaciones
+        }
+        for future in as_completed(future_to_est):
+            res = future.result()
+            if res:
+                resultados.append(res)
+    return Response(resultados, status=status.HTTP_200_OK)
