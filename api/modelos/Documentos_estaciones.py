@@ -1069,7 +1069,7 @@ class DocumentosEstaciones:
                 rows = cursor.fetchall()
             
             return [dict(zip(cols, row)) for row in rows]
-            
+
         except Exception as e:
             print(f"Error ejecutando consulta para estación {codgas}: {e}")
             return []
