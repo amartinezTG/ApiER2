@@ -1091,8 +1091,8 @@ class DocumentosEstaciones:
                 T.den,
                 T.codprd,
                 M.codgas
-            FROM {short_db}.[MovimientosTan] M
-                LEFT JOIN {short_db}.[Tanques] T ON M.codtan = T.cod AND M.codgas = T.codgas
+            FROM [{short_db}].[dbo].[MovimientosTan] M
+                LEFT JOIN [{short_db}].[dbo].[Tanques] T ON M.codtan = T.cod AND M.codgas = T.codgas
             WHERE
                 M.nroitm NOT IN (0,1,3,4)
                 AND M.tiptrn = 3
@@ -1102,7 +1102,7 @@ class DocumentosEstaciones:
             ORDER BY M.nrotrn DESC
         """
         inner_query = inner_query.replace("'", "''")
-        sql = f"SELECT * FROM OPENQUERY({linked_server}, '{inner_query}')"
+        sql = f"SELECT * FROM OPENQUERY([{linked_server}], '{inner_query}')"
 
         try:
             with pyodbc.connect(self.conn_str) as conn:
