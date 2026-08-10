@@ -1625,3 +1625,72 @@ def exchange_rates_view(request):
             if res:
                 resultados.append(res)
     return Response(resultados, status=status.HTTP_200_OK)
+
+
+@api_view(['GET', 'POST'])
+def get_recepciones_combustible_rango(request):
+    """
+    Recepciones de combustible (tiptrn=3) por rango de fechas, una sola
+    estación, en paralelo (aunque hoy el llamador de AplicativoPhp siempre
+    resuelve una estación concreta antes de llamar). Usado por
+    AplicativoPhp /station_portal (vista "Mis Recepciones").
+    """
+    from_date = request.data.get('from')
+    until_date = request.data.get('until')
+    codgas = request.data.get('codgas')
+    codprd = request.data.get('codprd')
+
+    if not all([from_date, until_date]):
+        return Response(
+            {"detail": "Faltan parámetros requeridos: from y until son obligatorios"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        documentos_estaciones = DocumentosEstaciones()
+        estacion_despachos = EstacionDespachos()
+
+        estaciones = estacion_despachos.estaciones()
+        codgas_int = int(codgas or 0)
+
+        estaciones_filtradas = estaciones if codgas_int == 0 else [e for e in estaciones if e["Codigo"] == codgas_int]
+
+        if not estaciones_filtradas:
+            return Response(
+                {"detail": "No se encontraron estaciones con los criterios especificados"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        resultados = []
+
+        with ThreadPoolExecutor(max_workers=40) as executor:
+            future_to_est = {
+                executor.submit(
+                    documentos_estaciones.get_recepciones_combustible_rango,
+                    est["Servidor"], est["BaseDatos"], est["Codigo"],
+                    from_date, until_date, codprd
+                ): est
+                for est in estaciones_filtradas
+            }
+
+            for future in as_completed(future_to_est):
+                est = future_to_est[future]
+                try:
+                    res = future.result()
+                    if res:
+                        resultados.extend(res)
+                except Exception as exc:
+                    print(f"Error procesando estación {est['Codigo']}: {exc}")
+
+        resultados_ordenados = sorted(
+            resultados,
+            key=lambda x: (x.get('fecha', ''), x.get('hora', ''))
+        )
+
+        return Response(resultados_ordenados, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response(
+            {"detail": f"Error interno del servidor: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

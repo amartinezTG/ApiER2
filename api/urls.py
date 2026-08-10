@@ -25,6 +25,7 @@ from .TG_php.views import (
     tanques_consolidado,
     resumen_movimientos_tanques,
     get_resumen_recepciones_combustible,
+    get_recepciones_combustible_rango,
     volumen_date,
     volumen_masivo,
     compras_facturas_base,
@@ -70,7 +71,8 @@ urlpatterns = [
     path('tanques/consolidado/', tanques_consolidado), 
     path('tanques/volumen_masivo/', volumen_masivo),
     path('get_resumen_recepciones_combustible/', get_resumen_recepciones_combustible),
-    path('resumen_movimientos_tanques/', resumen_movimientos_tanques), 
+    path('get_recepciones_combustible_rango/', get_recepciones_combustible_rango),
+    path('resumen_movimientos_tanques/', resumen_movimientos_tanques),
 
     path('compras_facturas_base/', compras_facturas_base),
     path('factura_detalle/', factura_detalle),
