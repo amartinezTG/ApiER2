@@ -1079,6 +1079,17 @@ class DocumentosEstaciones:
         Recepciones de combustible (tiptrn=3) de una estación en un rango de
         fechas. Réplica de MovimientosTanModel::sp_obtener_recepciones_combustible
         (AplicativoPhp) parametrizada por rango en vez de un solo día.
+
+        Incluye documento(s) de compra y factura/remisión asociados: el
+        documento real NO se liga por MovimientosTan.nrodoc de la propia fila
+        tiptrn=3 (casi siempre 0) sino por las filas tiptrn=4 ("aplicación de
+        documento") que comparten el mismo nrotrn — verificado contra Satélite
+        (codgas=24) 2026-08-01..10: una recepción puede tener 0, 1 o varias
+        filas tiptrn=4, cada una con su propio nrodoc (ej. nrotrn=4471991 con
+        nrodoc 2690 y 2691 simultáneos). Se agregan con STRING_AGG separados
+        por "; " para replicar el reporte nativo de ControlGas ("Compra 2690;
+        Compra 2691"). Factura/remisión se parsean de DocumentosC.txtref con
+        el mismo patrón @F:/@R:/@V: que MovimientosTanModel::buscarPorUUID.
         """
         prod = int(codprd or 0)
         inner_query = f"""
@@ -1089,10 +1100,55 @@ class DocumentosEstaciones:
                 M.volrec AS VolumenRecibido,
                 M.fchtrn,
                 T.den,
+                T.cod AS codtan,
                 T.codprd,
-                M.codgas
+                M.codgas,
+                docs.documento,
+                docs.referencia
             FROM [{short_db}].[dbo].[MovimientosTan] M
                 LEFT JOIN [{short_db}].[dbo].[Tanques] T ON M.codtan = T.cod AND M.codgas = T.codgas
+                OUTER APPLY (
+                    SELECT
+                        STRING_AGG(CONCAT('Compra ', M4.nrodoc), '; ') AS documento,
+                        STRING_AGG(ref.referencia_str, '; ') AS referencia
+                    FROM [{short_db}].[dbo].[MovimientosTan] M4
+                        LEFT JOIN [{short_db}].[dbo].[DocumentosC] DC ON M4.nrodoc = DC.nro AND M4.codgas = DC.codgas AND DC.tip = 1
+                        CROSS APPLY (
+                            SELECT
+                                LTRIM(RTRIM(
+                                    SUBSTRING(
+                                        CAST(DC.txtref AS VARCHAR(MAX)),
+                                        CHARINDEX('@F:', CAST(DC.txtref AS VARCHAR(MAX))) + 3,
+                                        CASE
+                                            WHEN CHARINDEX('@R:', CAST(DC.txtref AS VARCHAR(MAX))) > 0
+                                                THEN CHARINDEX('@R:', CAST(DC.txtref AS VARCHAR(MAX))) - (CHARINDEX('@F:', CAST(DC.txtref AS VARCHAR(MAX))) + 3)
+                                            ELSE 0
+                                        END
+                                    )
+                                )) AS factura,
+                                LTRIM(RTRIM(
+                                    SUBSTRING(
+                                        CAST(DC.txtref AS VARCHAR(MAX)),
+                                        CHARINDEX('@R:', CAST(DC.txtref AS VARCHAR(MAX))) + 3,
+                                        CASE
+                                            WHEN CHARINDEX('@V:', CAST(DC.txtref AS VARCHAR(MAX))) > 0
+                                                THEN CHARINDEX('@V:', CAST(DC.txtref AS VARCHAR(MAX))) - (CHARINDEX('@R:', CAST(DC.txtref AS VARCHAR(MAX))) + 3)
+                                            ELSE LEN(CAST(DC.txtref AS VARCHAR(MAX)))
+                                        END
+                                    )
+                                )) AS remision
+                        ) parsed
+                        CROSS APPLY (
+                            SELECT
+                                CASE
+                                    WHEN parsed.factura <> '' AND parsed.remision <> '' THEN parsed.factura + ' / ' + parsed.remision
+                                    WHEN parsed.remision <> '' THEN parsed.remision
+                                    WHEN parsed.factura <> '' THEN parsed.factura
+                                    ELSE ''
+                                END AS referencia_str
+                        ) ref
+                    WHERE M4.nrotrn = M.nrotrn AND M4.tiptrn = 4 AND M4.nrodoc > 0
+                ) docs
             WHERE
                 M.nroitm NOT IN (0,1,3,4)
                 AND M.tiptrn = 3
