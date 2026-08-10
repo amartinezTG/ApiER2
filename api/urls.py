@@ -40,7 +40,7 @@ from .TG_php.views import (
 )
 from .XmlCre.views import xmlCre
 
- 
+  
 urlpatterns = [
     # path('concentrado-og/', concentrado_og_view),
     path('concentrado-resultados/', concentrado_resultados_view),

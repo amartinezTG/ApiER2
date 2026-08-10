@@ -1592,7 +1592,7 @@ def inventarios_turnos_distribuido(request):
         "duracion_seg": round(time.time() - inicio, 1),
     }, status=status.HTTP_200_OK)
 
-  
+   
 @api_view(['POST'])
 def exchange_rates_view(request):
     try:

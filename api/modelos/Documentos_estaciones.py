@@ -1067,7 +1067,7 @@ class DocumentosEstaciones:
                 cursor.execute(sql)
                 cols = [col[0] for col in cursor.description]
                 rows = cursor.fetchall()
-            
+             
             return [dict(zip(cols, row)) for row in rows]
 
         except Exception as e:
