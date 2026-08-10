@@ -1074,4 +1074,44 @@ class DocumentosEstaciones:
             print(f"Error ejecutando consulta para estación {codgas}: {e}")
             return []
 
-    
+    def get_recepciones_combustible_rango(self, linked_server, short_db, codgas, from_date, until_date, codprd):
+        """
+        Recepciones de combustible (tiptrn=3) de una estación en un rango de
+        fechas. Réplica de MovimientosTanModel::sp_obtener_recepciones_combustible
+        (AplicativoPhp) parametrizada por rango en vez de un solo día.
+        """
+        prod = int(codprd or 0)
+        inner_query = f"""
+            SELECT
+                M.nrotrn,
+                CONVERT(DATE, DATEADD(DAY, -1, M.fchtrn)) AS fecha,
+                CAST(CONVERT(TIME, DATEADD(MINUTE, M.hratrn % 100, DATEADD(HOUR, M.hratrn / 100, 0))) AS TIME(0)) AS hora,
+                M.volrec AS VolumenRecibido,
+                M.fchtrn,
+                T.den,
+                T.codprd,
+                M.codgas
+            FROM {short_db}.[MovimientosTan] M
+                LEFT JOIN {short_db}.[Tanques] T ON M.codtan = T.cod AND M.codgas = T.codgas
+            WHERE
+                M.nroitm NOT IN (0,1,3,4)
+                AND M.tiptrn = 3
+                AND M.fchtrn BETWEEN {int(from_date)} AND {int(until_date)}
+                AND M.codgas = {int(codgas)}
+                AND ({prod} = 0 OR T.codprd = {prod})
+            ORDER BY M.nrotrn DESC
+        """
+        inner_query = inner_query.replace("'", "''")
+        sql = f"SELECT * FROM OPENQUERY({linked_server}, '{inner_query}')"
+
+        try:
+            with pyodbc.connect(self.conn_str) as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql)
+                cols = [col[0] for col in cursor.description]
+                rows = cursor.fetchall()
+            return [dict(zip(cols, row)) for row in rows]
+        except pyodbc.Error as e:
+            print(f"Error get_recepciones_combustible_rango para {codgas}: {e}")
+            return []
+
