@@ -439,7 +439,7 @@ class InventariosEstaciones:
                 cursor.execute(sql)
                 cols = [col[0] for col in cursor.description]
                 rows = cursor.fetchall()
-                
+
                 results = []
                 for row in rows:
                     row_dict = {}
