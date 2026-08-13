@@ -551,6 +551,7 @@ class InventariosEstaciones:
                 CASE WHEN nrotur = 10 THEN 11 WHEN nrotur = 20 THEN 21 WHEN nrotur IN (30, 40) THEN 41 END AS Turno
             FROM [{base_datos}].dbo.StockReal (NOLOCK)
             WHERE fch BETWEEN {from_fch} AND {until_fch} AND codprd IN ({prds}) AND nrotur NOT IN (30, 31)
+                AND NOT (codgas = 2 AND codtan = 78)
             GROUP BY fch, codprd, codgas, nrotur
         ) I ON V.Fecha = I.Fecha AND V.CodProducto = I.CodProducto AND V.CodGasolinera = I.CodGasolinera AND V.Turno = I.Turno
         LEFT JOIN (
@@ -560,6 +561,7 @@ class InventariosEstaciones:
                 CASE WHEN nrotur = 10 THEN 11 WHEN nrotur = 20 THEN 21 WHEN nrotur IN (30, 40) THEN 41 END AS Turno, fch
             FROM [{base_datos}].dbo.StockReal (NOLOCK)
             WHERE fch BETWEEN ({from_fch} - 1) AND ({until_fch} - 1) AND codprd IN ({prds}) AND nrotur NOT IN (30, 31)
+                AND NOT (codgas = 2 AND codtan = 78)
             GROUP BY fch, codprd, codgas, nrotur
         ) IA ON (V.fch - 1) = IA.fch AND V.CodProducto = IA.CodProducto AND V.CodGasolinera = IA.CodGasolinera AND V.Turno = IA.Turno
         LEFT JOIN (
