@@ -1255,23 +1255,77 @@ def actualizar_ruta_factura(request):
     archivarlo con el UUID como nombre final), para mantener sincronizada
     la base de datos con la ubicación real del archivo.
 
-    Input (JSON o form-data): { "factura_id": int, "ruta": str, "nombre_archivo": str }
+    Opcionalmente actualiza también RutaXml/NombreXml, la ubicación del CFDI
+    que llegó por correo junto al PDF. Si no se mandan, esas columnas quedan
+    como estaban (no todas las facturas traen XML).
+
+    Input (JSON o form-data):
+        {
+            "factura_id": int,
+            "ruta": str,
+            "nombre_archivo": str,
+            "ruta_xml": str,      # opcional
+            "nombre_xml": str     # opcional
+        }
     """
     factura_id = request.data.get('factura_id')
     ruta = request.data.get('ruta') or ''
     nombre_archivo = request.data.get('nombre_archivo') or ''
+    ruta_xml = request.data.get('ruta_xml') or ''
+    nombre_xml = request.data.get('nombre_xml') or ''
 
     if not factura_id:
         return Response({"detail": "Falta factura_id."}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
         importador = ImportadorFacturas()
-        importador.actualizar_ruta_archivo(int(factura_id), ruta, nombre_archivo)
+        importador.actualizar_ruta_archivo(
+            int(factura_id), ruta, nombre_archivo,
+            ruta_xml=ruta_xml or None,
+            nombre_xml=nombre_xml or None,
+        )
         return Response({"estado": "exitosa"}, status=status.HTTP_200_OK)
     except Exception as e:
         logger.error(f"Error en actualizar_ruta_factura: {e}", exc_info=True)
         return Response(
             {"detail": f"Error al actualizar ruta: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+def factura_por_uuid(request):
+    """
+    Busca una factura por su UUID y devuelve la ubicación de sus archivos.
+
+    La usa backfill_xml.py (servidor de tareas programadas) para ligar los XML
+    que quedaron sueltos en las carpetas de proveedores con su factura ya
+    importada: necesita saber dónde quedó archivado el PDF (para dejar el XML
+    junto a él) y si ya tiene un XML registrado.
+
+    Query params:
+      uuid (obligatorio) — UUID del CFDI (Timbre Fiscal Digital)
+
+    Output: { Id, UUID, RutaArchivo, NombreArchivo, RutaXml, NombreXml }
+            o 404 si el UUID no está en FacturasRecibidas.
+    """
+    uuid = (request.query_params.get('uuid') or '').strip()
+    if not uuid:
+        return Response({"detail": "Falta el parámetro uuid."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        importador = ImportadorFacturas()
+        factura = importador.obtener_archivos_por_uuid(uuid)
+        if not factura:
+            return Response(
+                {"detail": f"No existe factura con UUID {uuid}."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        return Response(factura, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error en factura_por_uuid: {e}", exc_info=True)
+        return Response(
+            {"detail": f"Error al buscar la factura: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
@@ -1537,7 +1591,7 @@ def importar_factura_pdf(request):
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
-  
+   
 @api_view(['POST'])
 def inventarios_turnos_distribuido(request): 
     """

@@ -17,7 +17,7 @@ INSERT_FACTURA = """
         FechaTimbrado, UUID, Destino, Remision,
         RutaArchivo, NombreArchivo
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-""" 
+"""  
 
 INSERT_CONCEPTO = """
     INSERT INTO [TG].[dbo].[FacturasRecibidasConceptos]
@@ -70,6 +70,33 @@ class ImportadorFacturas:
                 "Id": row[0], "SubTotal": row[1], "Total": row[2],
                 "Folio": row[3], "Fecha": row[4], "FormaPago": row[5],
                 "MetodoPago": row[6], "LugarExpedicion": row[7], "Remision": row[8],
+            }
+
+    def obtener_archivos_por_uuid(self, uuid: str) -> Optional[Dict[str, Any]]:
+        """
+        Devuelve Id y ubicación de los archivos (PDF y XML) de la factura con
+        ese UUID, o None si no existe.
+
+        Se usa para el backfill de XML sueltos: hace falta saber en qué
+        subcarpeta quedó archivado el PDF (para dejar el XML junto a él) y si
+        la factura ya tiene un XML registrado (para no re-procesarla).
+        """
+        with pyodbc.connect(self.conn_str) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT Id, UUID, RutaArchivo, NombreArchivo, RutaXml, NombreXml "
+                "FROM FacturasRecibidas WHERE UUID = ?", (uuid,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "Id": row[0],
+                "UUID": row[1],
+                "RutaArchivo": row[2] or "",
+                "NombreArchivo": row[3] or "",
+                "RutaXml": row[4] or "",
+                "NombreXml": row[5] or "",
             }
 
     def factura_incompleta(self, factura: Dict[str, Any]) -> bool:
@@ -133,15 +160,36 @@ class ImportadorFacturas:
                 conn.rollback()
                 raise e
 
-    def actualizar_ruta_archivo(self, factura_id: int, ruta: str, nombre_archivo: str) -> None:
-        """Actualiza RutaArchivo y NombreArchivo tras mover/renombrar el PDF en disco."""
+    def actualizar_ruta_archivo(
+        self,
+        factura_id: int,
+        ruta: str,
+        nombre_archivo: str,
+        ruta_xml: Optional[str] = None,
+        nombre_xml: Optional[str] = None,
+    ) -> None:
+        """
+        Actualiza RutaArchivo y NombreArchivo tras mover/renombrar el PDF en disco.
+
+        Si se reciben ruta_xml/nombre_xml, actualiza además RutaXml/NombreXml
+        (ubicación del CFDI que llegó junto al PDF). Cuando no se mandan, esas
+        columnas se dejan intactas: una factura sin XML no pierde el que ya
+        tuviera registrado de una corrida anterior.
+        """
+        sets = ["RutaArchivo = ?", "NombreArchivo = ?"]
+        params = [ruta, nombre_archivo]
+
+        if ruta_xml or nombre_xml:
+            sets += ["RutaXml = ?", "NombreXml = ?"]
+            params += [ruta_xml or "", nombre_xml or ""]
+
+        params.append(factura_id)
+        sql = f"UPDATE FacturasRecibidas SET {', '.join(sets)} WHERE Id = ?"
+
         with pyodbc.connect(self.conn_str) as conn:
             cursor = conn.cursor()
             try:
-                cursor.execute(
-                    "UPDATE FacturasRecibidas SET RutaArchivo = ?, NombreArchivo = ? WHERE Id = ?",
-                    (ruta, nombre_archivo, factura_id),
-                )
+                cursor.execute(sql, tuple(params))
                 conn.commit()
             except Exception as e:
                 conn.rollback()

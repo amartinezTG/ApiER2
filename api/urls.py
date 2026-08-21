@@ -33,6 +33,7 @@ from .TG_php.views import (
     compras_estadisticas,
     importar_factura_pdf,
     actualizar_ruta_factura,
+    factura_por_uuid,
     facturas_pendientes_backfill,
     facturas_vencen_hoy,
     inventarios_turnos_distribuido,
@@ -40,7 +41,7 @@ from .TG_php.views import (
 )
 from .XmlCre.views import xmlCre
 
-  
+    
 urlpatterns = [
     # path('concentrado-og/', concentrado_og_view),
     path('concentrado-resultados/', concentrado_resultados_view),
@@ -79,6 +80,7 @@ urlpatterns = [
     path('compras_estadisticas/', compras_estadisticas),
     path('importar_factura_pdf/', importar_factura_pdf),
     path('actualizar_ruta_factura/', actualizar_ruta_factura),
+    path('factura_por_uuid/', factura_por_uuid),
     path('facturas_pendientes_backfill/', facturas_pendientes_backfill),
     path('facturas_vencen_hoy/', facturas_vencen_hoy),
     path('TG_php/exchange_rates/', exchange_rates_view),
