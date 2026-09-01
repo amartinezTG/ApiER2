@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Dict, Any, List
 
 from .utils import _strip_diacritics, _to_dec, _clean
- 
+  
 
 def extraer_conceptos_lobo_por_tabla(path_pdf: Path) -> List[Dict[str, Any]]:
     """
@@ -1120,7 +1120,11 @@ def extraer_conceptos_petrotal(path_pdf: Path) -> List[Dict[str, Any]]:
             
             # Patrón para capturar la línea completa del concepto
             # CANT CLAVE UDM CONCEPTO REMISION OBJ PRECIO IMPORTE IVA
-            pattern = r'(\d+(?:\.\d+)?)\s+(\d{8})\s+(LTR|ACT)\s+([A-Z]+)\s+([A-Z0-9/\-]+)\s+(\d{2})\s+\$([0-9,.]+)\s+\$([0-9,.]+)\s+\$([0-9,.]+)'
+            # El concepto puede ser una sola palabra ("MAXIMA") o varias con
+            # guión ("T-SUPER PREMIUM"): se captura de forma no-greedy hasta
+            # la remisión, que siempre empieza con "H/" (formato
+            # "H/22730/COM/2019-F-PET31506-1") y así no se come el concepto.
+            pattern = r'(\d+(?:\.\d+)?)\s+(\d{8})\s+(LTR|ACT)\s+([A-Z][A-Z\s\-]*?)\s+(H/[A-Z0-9/\-]+)\s+(\d{2})\s+\$([0-9,.]+)\s+\$([0-9,.]+)\s+\$([0-9,.]+)'
             
             for match in re.finditer(pattern, page_text, re.I):
                 cantidad = _to_dec(match.group(1), prec=4)

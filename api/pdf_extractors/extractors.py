@@ -745,7 +745,7 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
         "Destino": "",
         "Remision": ""
     }
-    
+     
     full_text = _strip_diacritics(" ".join([p.get_text() or "" for p in doc]))
 
     # === DETECTAR FACTURA CANCELADA ===
@@ -1570,6 +1570,18 @@ def extract_with_profile_petrotal(doc: fitz.Document) -> Dict[str, Any]:
     m = re.search(r'Folio\s+Fiscal:\s*([A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12})', full_text, re.I)
     if m:
         data["UUID"] = m.group(1).upper()
+    else:
+        # El PDF de Petrotal usa un layout de 2 columnas: PyMuPDF extrae
+        # primero el bloque de 3 etiquetas ("Folio Fiscal:", "Certificado
+        # SAT:", "Fecha y Hora de cert.:") y luego el bloque de sus 3
+        # valores en el mismo orden, así que el UUID nunca queda pegado a
+        # su etiqueta. Se busca el primer UUID-shaped string después de
+        # "Folio Fiscal:", que es siempre el primer valor del bloque.
+        idx = full_text.lower().find('folio fiscal')
+        if idx != -1:
+            m = re.search(r'([A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12})', full_text[idx:], re.I)
+            if m:
+                data["UUID"] = m.group(1).upper()
 
     # === FECHA EMISIÓN - CORREGIDO ===
     m = re.search(r'Fecha\s+y\s+Hora\s+de\s+emision:\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', full_text, re.I)
@@ -1614,6 +1626,16 @@ def extract_with_profile_petrotal(doc: fitz.Document) -> Dict[str, Any]:
     m = re.search(r'Tipo\s+Comp\.\s*:\s*([IEPNT])', full_text, re.I)
     if m:
         data["TipoDeComprobante"] = m.group(1).upper()
+
+    # --- Complemento de pago / nota de crédito: marcar banderas ---
+    # Basado solo en TipoDeComprobante (I/E/P/N/T ya extraído arriba): no se
+    # ha visto un P o E real de Petrotal para confirmar el texto libre que
+    # usan otros proveedores ("Complemento de Pago", etc.), así que no se
+    # adivina un patrón de texto. Sin esto, una nota de crédito o un
+    # complemento de Petrotal se importaría como factura normal.
+    tipo = (data.get("TipoDeComprobante") or "").upper()
+    data["__is_pago"] = tipo == "P"
+    data["__is_nota_credito"] = tipo == "E"
 
     # === FORMA DE PAGO ===
     m = re.search(r'FORMA\s+DE\s+PAGO:\s*(\d{2})', full_text, re.I)
