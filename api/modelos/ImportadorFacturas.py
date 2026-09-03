@@ -15,10 +15,10 @@ INSERT_FACTURA = """
         EmisorNombre, EmisorRfc, EmisorRegimenFiscal,
         ReceptorNombre, ReceptorRfc,
         FechaTimbrado, UUID, Destino, Remision,
-        RutaArchivo, NombreArchivo
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-"""  
-
+        RutaArchivo, NombreArchivo, PresentacionTesoro
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+""" 
+  
 INSERT_CONCEPTO = """
     INSERT INTO [TG].[dbo].[FacturasRecibidasConceptos]
     ([FacturaId],[Cantidad],[ClaveProdServ],[ClaveUnidad],[Descripcion],
@@ -32,7 +32,8 @@ UPDATE_FACTURA = """
         Folio = ?, Fecha = ?, FormaPago = ?, MetodoPago = ?, Moneda = ?,
         SubTotal = ?, Total = ?, Exportacion = ?, TipoDeComprobante = ?,
         LugarExpedicion = ?, EmisorNombre = ?, EmisorRfc = ?, EmisorRegimenFiscal = ?,
-        ReceptorNombre = ?, ReceptorRfc = ?, FechaTimbrado = ?, Destino = ?, Remision = ?
+        ReceptorNombre = ?, ReceptorRfc = ?, FechaTimbrado = ?, Destino = ?, Remision = ?,
+        PresentacionTesoro = ?
     WHERE Id = ?
 """
 
@@ -40,7 +41,7 @@ UPDATE_FACTURA = """
 class ImportadorFacturas:
     # Campos de cabecera que, si están vacíos en BD pero la nueva extracción
     # los trae, justifican actualizar una factura ya importada.
-    CAMPOS_CLAVE = ["Folio", "Fecha", "FormaPago", "MetodoPago", "LugarExpedicion", "Remision"]
+    CAMPOS_CLAVE = ["Folio", "Fecha", "FormaPago", "MetodoPago", "LugarExpedicion", "Remision", "PresentacionTesoro"]
 
     def __init__(self):
         self.conn_str = CONTROLGASTG_CONN_STR
@@ -60,7 +61,7 @@ class ImportadorFacturas:
         with pyodbc.connect(self.conn_str) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT Id, SubTotal, Total, Folio, Fecha, FormaPago, MetodoPago, LugarExpedicion, Remision "
+                "SELECT Id, SubTotal, Total, Folio, Fecha, FormaPago, MetodoPago, LugarExpedicion, Remision, PresentacionTesoro "
                 "FROM FacturasRecibidas WHERE UUID = ?", (uuid,)
             )
             row = cursor.fetchone()
@@ -70,6 +71,7 @@ class ImportadorFacturas:
                 "Id": row[0], "SubTotal": row[1], "Total": row[2],
                 "Folio": row[3], "Fecha": row[4], "FormaPago": row[5],
                 "MetodoPago": row[6], "LugarExpedicion": row[7], "Remision": row[8],
+                "PresentacionTesoro": row[9],
             }
 
     def obtener_archivos_por_uuid(self, uuid: str) -> Optional[Dict[str, Any]]:
@@ -153,6 +155,7 @@ class ImportadorFacturas:
                     d.get("FechaTimbrado"),
                     d.get("Destino", ""),
                     d.get("Remision", ""),
+                    d.get("PresentacionTesoro", ""),
                     factura_id,
                 ))
                 conn.commit()
@@ -222,6 +225,7 @@ class ImportadorFacturas:
                     d.get("Remision", ""),
                     d.get("RutaArchivo", ""),
                     d.get("NombreArchivo", ""),
+                    d.get("PresentacionTesoro", ""),
                 ))
                 factura_id = cursor.execute("SELECT @@IDENTITY").fetchone()[0]
                 conn.commit()
@@ -274,6 +278,7 @@ class ImportadorFacturas:
         d["ReceptorRfc"] = (d.get("ReceptorRfc") or "")[:13]
         d["Destino"] = (d.get("Destino") or "")[:255]
         d["Remision"] = (d.get("Remision") or "")[:100]
+        d["PresentacionTesoro"] = (d.get("PresentacionTesoro") or "")[:50]
         return d
 
     def normalizar_concepto(self, c: Dict[str, Any]) -> Dict[str, Any]:

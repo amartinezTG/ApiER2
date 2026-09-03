@@ -744,8 +744,8 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
         "ReceptorNombre": "", "ReceptorRfc": "", "FechaTimbrado": None, "UUID": "",
         "Destino": "",
         "Remision": ""
-    }
-     
+    } 
+
     full_text = _strip_diacritics(" ".join([p.get_text() or "" for p in doc]))
 
     # === DETECTAR FACTURA CANCELADA ===
@@ -1084,7 +1084,14 @@ def extract_with_profile_tesoro(doc: fitz.Document) -> Dict[str, Any]:
         "EmisorNombre": "", "EmisorRFC": "", "EmisorRegimenFiscal": "",
         "ReceptorNombre": "", "ReceptorRfc": "", "FechaTimbrado": None, "UUID": "",
         "Destino": "",    # ← NUEVO
-        "Remision": ""    # ← NUEVO
+        "Remision": "",   # ← NUEVO
+        # Codigo interno de Tesoro para su cliente/punto de entrega (campo
+        # "PRESENTACIÓN" del PDF). No tiene relacion aritmetica con el
+        # codigo Estacion de TotalGas (confirmado 2026-09-03 cruzando
+        # recepcion->factura->PDF para 12 estaciones de Diaz Gas) -- sirve
+        # como llave hacia TG.dbo.EstacionesCodigosExternos
+        # (proveedor_rfc='TMS1611162N5'), no como dato calculable.
+        "PresentacionTesoro": "",
     }
     full_text = _strip_diacritics(" ".join([p.get_text() or "" for p in doc]))
 
@@ -1164,6 +1171,15 @@ def extract_with_profile_tesoro(doc: fitz.Document) -> Dict[str, Any]:
         m_remision = re.search(r'Comprobante\s+de\s+Carga\s+(\d+)', full_text, re.I)
         if m_remision:
             data["Remision"] = m_remision.group(1).strip()
+
+    # ========== PRESENTACIÓN para TESORO ==========
+    # \b es obligatorio: sin limite de palabra, "PRESENTACION" matchea como
+    # substring dentro de "REPRESENTACIÓN IMPRESA DE UN CFDI" del encabezado,
+    # capturando el folio de la factura en vez del codigo real (bug
+    # descubierto y corregido en la validacion 2026-09-03).
+    m_presentacion = re.search(r'\bPRESENTACI[OÓ]N:\s*\n?\s*(\d+)', full_text, re.I)
+    if m_presentacion:
+        data["PresentacionTesoro"] = m_presentacion.group(1).strip()
 
     # --- Complemento de pago / nota de crédito: marcar banderas ---
     tipo = (data.get("TipoDeComprobante") or "").upper()
@@ -1411,10 +1427,15 @@ def extract_with_profile_premiergas(doc: fitz.Document) -> Dict[str, Any]:
         data["ReceptorRfc"] = m.group(1).strip()
 
     # === FOLIO ===
-    # Formato: FE - 030621 o FE-030621
-    m = re.search(r'FE\s*[-–]\s*(\d+)', full_text, re.I)
+    # Formato: FE - 030621 o FE-030621. También existe FF (visto en facturas a
+    # DIAZ GAS / DISTRIBUIDORA GASO MEX, series H/23439/COM/20 con permiso
+    # PL/19422.../PL/19424.../PL/12843...): sin aceptar FF el folio y la fecha
+    # de emisión (que depende del mismo folio, ver más abajo) quedaban NULL
+    # (casos reales: UUID 83838ed1, ae2652df, a54932d7, folios FF-001414/
+    # FF-001402/FF-001401 — verificado 2026-09-02 contra el PDF original).
+    m = re.search(r'(F[EF])\s*[-–]\s*(\d+)', full_text, re.I)
     if m:
-        data["Folio"] = f"FE-{m.group(1)}"
+        data["Folio"] = f"{m.group(1).upper()}-{m.group(2)}"
 
     # === UUID ===
     m = re.search(r'Folio\s+Fiscal:\s*([A-F0-9a-f]{8}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{12})', full_text, re.I)
@@ -1422,8 +1443,8 @@ def extract_with_profile_premiergas(doc: fitz.Document) -> Dict[str, Any]:
         data["UUID"] = m.group(1).lower()
 
     # === FECHA EMISIÓN ===
-    # Buscar la fecha que aparece después de "FACTURA 4.0"
-    m = re.search(r'FACTURA\s+4\.0\s+FE\s*[-–]\s*\d+\s+(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2})', full_text, re.I)
+    # Buscar la fecha que aparece después de "FACTURA 4.0" (mismo prefijo FE/FF que el folio)
+    m = re.search(r'FACTURA\s+4\.0\s+F[EF]\s*[-–]\s*\d+\s+(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2})', full_text, re.I)
     if m:
         fecha_str = m.group(1)
         # Convertir de dd/mm/yyyy hh:mm:ss a yyyy-mm-dd hh:mm:ss
@@ -1489,10 +1510,17 @@ def extract_with_profile_premiergas(doc: fitz.Document) -> Dict[str, Any]:
         data["Destino"] = m.group(1).strip()
 
     # === REMISIÓN ===
-    # Buscar el RP-#######
+    # Buscar el RP-####### (formato normal). Si no aparece, las facturas
+    # directas (folio FF, ver === FOLIO === más arriba) usan en su lugar
+    # "BOL ######" — se guarda igual, con su propio prefijo, para no
+    # confundirla con el formato RP- (caso real: folios FF-001401/1402/1414).
     m = re.search(r'(RP-\d+)', full_text, re.I)
     if m:
         data["Remision"] = m.group(1).strip()
+    else:
+        m = re.search(r'\b(BOL\s*\d+)\b', full_text, re.I)
+        if m:
+            data["Remision"] = re.sub(r'\s+', ' ', m.group(1).strip().upper())
 
     # --- Complemento de pago / nota de crédito: marcar banderas ---
     # (Premiergas históricamente solo manda facturas I, pero por si acaso)
