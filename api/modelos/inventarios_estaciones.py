@@ -521,19 +521,82 @@ class InventariosEstaciones:
         cuadren con /supply/tgr01. Fechas en serial ControlGas (días desde 1899-12-31).
         A diferencia de los otros métodos, LANZA la excepción en error SQL para que
         la vista distinga estación caída de estación sin datos.
-        """
+
+        El universo de fecha/producto/turno sale de la UNIÓN de Ventas, StockReal
+        (corte físico) y Movimientos (compra) — no solo de Ventas. Un turno sin
+        venta pero con compra o corte real (ej. Villa Ahumada 18-ago-2026, turno
+        21 de diésel: 0 ventas pero sí una recepción de 52,600 L) antes desaparecía
+        por completo de la respuesta, porque V era la base del LEFT JOIN y ese
+        turno nunca generaba fila en Ventas. TotalGas (replace_station_range)
+        rellena de su lado los turnos que ApiER no traiga en absoluto, pero eso
+        solo cubre huecos de sincronización — un turno que sí ocurrió y sí tiene
+        datos reales debe llegar completo desde aquí.
+
+        La rama de StockReal del UNION exige can > 0 en algún turno del rango
+        para ese codgas+codprd (no basta con "existe la fila"): varias estaciones
+        tienen un tanque de un producto que no operan (ej. Lerdo, tanque 13 de
+        súper, siempre en 0.0) que StockReal sigue reportando turno a turno.
+        Sin este filtro, ese tanque fantasma generaba 3 filas/día de un producto
+        que la estación nunca vende ni compra (caso real: 93 filas de súper en
+        cero para Lerdo en un solo mes).
+
+        Clasificación de turno de StockReal/Movimientos por DECENA de nrotur
+        (nrotur // 10: 1→11, 2→21, cualquier otra→41), no por lista fija de
+        valores: nrotur no es siempre 10/11, 20/21, 30/31/40/41 — Villa Ahumada
+        tiene compras con nrotur=22 en Movimientos, que ninguna lista anterior
+        (IN (20,21)) contemplaba. Esas filas quedaban con Turno=NULL y se
+        perdían del JOIN, apareciendo como si la compra estuviera "en el turno
+        equivocado" en TotalGas (la compra real no llegaba a NINGÚN turno; la
+        vista solo lo mostraba distribuido raro).
+        """ 
         from_fch = int(from_fch)
         until_fch = int(until_fch)
         prds = '1,2,3,179,180,181,192,193'
         query = f"""
         SELECT
-            V.Fecha, V.Producto, V.CodProducto, V.Turno, V.VentasReales,
+            U.Fecha, ISNULL(V.Producto, t3.den) AS Producto, U.CodProducto, U.Turno,
+            ISNULL(V.VentasReales, 0) AS VentasReales,
             I.Cantidad AS Inventario,
             ISNULL(C.CantidadCompra, 0) AS CantidadCompra,
             ISNULL(IA.Cantidad, 0) AS InventarioInicial,
-            ROUND((ISNULL(IA.Cantidad, 0) - V.VentasReales) + ISNULL(C.CantidadCompra, 0), 2) AS InventarioContable,
-            ROUND(I.Cantidad - ROUND((IA.Cantidad - V.VentasReales) + ISNULL(C.CantidadCompra, 0), 2), 2) AS Diferencia
+            ROUND((ISNULL(IA.Cantidad, 0) - ISNULL(V.VentasReales, 0)) + ISNULL(C.CantidadCompra, 0), 2) AS InventarioContable,
+            ROUND(I.Cantidad - ROUND((IA.Cantidad - ISNULL(V.VentasReales, 0)) + ISNULL(C.CantidadCompra, 0), 2), 2) AS Diferencia
         FROM (
+            SELECT Fecha, CodProducto, CodGasolinera, Turno, fch FROM (
+                SELECT
+                    CONVERT(VARCHAR(10), CAST(t1.fch AS DATETIME) - 1, 23) AS Fecha,
+                    CASE WHEN t1.nrotur IN (30,31) THEN 41 ELSE t1.nrotur END AS Turno,
+                    t1.codprd AS CodProducto, t2.codgas AS CodGasolinera, t1.fch
+                FROM [{base_datos}].dbo.Ventas t1
+                LEFT JOIN [{base_datos}].dbo.Islas t2 ON t1.codisl = t2.cod
+                WHERE t1.codprd IN ({prds}) AND t1.fch BETWEEN {from_fch} AND {until_fch}
+                GROUP BY t1.fch, t2.codgas, t1.codprd, CASE WHEN t1.nrotur IN (30, 31) THEN 41 ELSE t1.nrotur END
+                UNION
+                SELECT
+                    CONVERT(VARCHAR(10), CAST(fch AS DATETIME) - 1, 23) AS Fecha,
+                    CASE (nrotur / 10) WHEN 1 THEN 11 WHEN 2 THEN 21 ELSE 41 END AS Turno,
+                    codprd AS CodProducto, codgas AS CodGasolinera, fch
+                FROM [{base_datos}].dbo.StockReal sr1 (NOLOCK)
+                WHERE fch BETWEEN {from_fch} AND {until_fch} AND codprd IN ({prds}) AND nrotur NOT IN (30, 31)
+                    AND NOT (codgas = 2 AND codtan = 78)
+                    AND EXISTS (
+                        SELECT 1 FROM [{base_datos}].dbo.StockReal sr2 (NOLOCK)
+                        WHERE sr2.codgas = sr1.codgas AND sr2.codprd = sr1.codprd
+                          AND sr2.nrotur NOT IN (30, 31) AND sr2.can > 0
+                    )
+                GROUP BY fch, codprd, codgas, nrotur
+                UNION
+                SELECT
+                    CONVERT(VARCHAR(10), CAST(fch AS DATETIME) - 1, 23) AS Fecha,
+                    CASE (nrotur / 10) WHEN 1 THEN 11 WHEN 2 THEN 21 ELSE 41 END AS Turno,
+                    codprd AS CodProducto, codgas AS CodGasolinera, fch
+                FROM [{base_datos}].dbo.Movimientos (NOLOCK)
+                WHERE fch BETWEEN {from_fch} AND {until_fch} AND can > 0 AND codprd IN ({prds})
+                GROUP BY fch, codgas, codprd, CASE (nrotur / 10) WHEN 1 THEN 11 WHEN 2 THEN 21 ELSE 41 END
+            ) todos
+        ) U
+        LEFT JOIN [{base_datos}].dbo.Productos t3 ON t3.cod = U.CodProducto
+        LEFT JOIN (
             SELECT
                 CONVERT(VARCHAR(10), CAST(t1.fch AS DATETIME) - 1, 23) AS Fecha, t3.den AS Producto,
                 CASE WHEN t1.nrotur IN (30,31) THEN 41 ELSE t1.nrotur END AS Turno,
@@ -543,37 +606,37 @@ class InventariosEstaciones:
             LEFT JOIN [{base_datos}].dbo.Productos t3 ON t1.codprd = t3.cod
             WHERE t1.codprd IN ({prds}) AND t1.fch BETWEEN {from_fch} AND {until_fch}
             GROUP BY t3.den, t1.fch, t2.codgas, t1.codprd, CASE WHEN t1.nrotur IN (30, 31) THEN 41 ELSE t1.nrotur END
-        ) V
+        ) V ON U.Fecha = V.Fecha AND U.CodProducto = V.CodProducto AND U.CodGasolinera = V.CodGasolinera AND U.Turno = V.Turno
         LEFT JOIN (
             SELECT
                 CONVERT(VARCHAR(10), CAST(fch AS DATETIME) - 1, 23) AS Fecha, SUM(can) AS Cantidad,
                 codprd AS CodProducto, codgas AS CodGasolinera,
-                CASE WHEN nrotur = 10 THEN 11 WHEN nrotur = 20 THEN 21 WHEN nrotur IN (30, 40) THEN 41 END AS Turno
+                CASE (nrotur / 10) WHEN 1 THEN 11 WHEN 2 THEN 21 ELSE 41 END AS Turno
             FROM [{base_datos}].dbo.StockReal (NOLOCK)
             WHERE fch BETWEEN {from_fch} AND {until_fch} AND codprd IN ({prds}) AND nrotur NOT IN (30, 31)
                 AND NOT (codgas = 2 AND codtan = 78)
             GROUP BY fch, codprd, codgas, nrotur
-        ) I ON V.Fecha = I.Fecha AND V.CodProducto = I.CodProducto AND V.CodGasolinera = I.CodGasolinera AND V.Turno = I.Turno
+        ) I ON U.Fecha = I.Fecha AND U.CodProducto = I.CodProducto AND U.CodGasolinera = I.CodGasolinera AND U.Turno = I.Turno
         LEFT JOIN (
             SELECT
                 CONVERT(VARCHAR(10), CAST(fch AS DATETIME) - 1, 23) AS Fecha, SUM(can) AS Cantidad,
                 codprd AS CodProducto, codgas AS CodGasolinera,
-                CASE WHEN nrotur = 10 THEN 11 WHEN nrotur = 20 THEN 21 WHEN nrotur IN (30, 40) THEN 41 END AS Turno, fch
+                CASE (nrotur / 10) WHEN 1 THEN 11 WHEN 2 THEN 21 ELSE 41 END AS Turno, fch
             FROM [{base_datos}].dbo.StockReal (NOLOCK)
             WHERE fch BETWEEN ({from_fch} - 1) AND ({until_fch} - 1) AND codprd IN ({prds}) AND nrotur NOT IN (30, 31)
                 AND NOT (codgas = 2 AND codtan = 78)
             GROUP BY fch, codprd, codgas, nrotur
-        ) IA ON (V.fch - 1) = IA.fch AND V.CodProducto = IA.CodProducto AND V.CodGasolinera = IA.CodGasolinera AND V.Turno = IA.Turno
+        ) IA ON (U.fch - 1) = IA.fch AND U.CodProducto = IA.CodProducto AND U.CodGasolinera = IA.CodGasolinera AND U.Turno = IA.Turno
         LEFT JOIN (
             SELECT
                 CONVERT(VARCHAR(10), CAST(fch AS DATETIME) - 1, 23) AS Fecha, codprd AS CodProducto, codgas AS CodGasolinera,
                 SUM(ROUND(can, 0)) AS CantidadCompra,
-                CASE WHEN nrotur IN (10, 11) THEN 11 WHEN nrotur IN (20, 21) THEN 21 WHEN nrotur IN (30, 31, 40, 41) THEN 41 END AS Turno
+                CASE (nrotur / 10) WHEN 1 THEN 11 WHEN 2 THEN 21 ELSE 41 END AS Turno
             FROM [{base_datos}].dbo.Movimientos (NOLOCK)
             WHERE fch BETWEEN {from_fch} AND {until_fch} AND can > 0 AND codprd IN ({prds})
-            GROUP BY fch, codgas, codprd, CASE WHEN nrotur IN (10, 11) THEN 11 WHEN nrotur IN (20, 21) THEN 21 WHEN nrotur IN (30, 31, 40, 41) THEN 41 END
-        ) C ON V.Fecha = C.Fecha AND V.CodProducto = C.CodProducto AND V.CodGasolinera = C.CodGasolinera AND V.Turno = C.Turno
-        ORDER BY V.Fecha, V.Producto, V.Turno
+            GROUP BY fch, codgas, codprd, CASE (nrotur / 10) WHEN 1 THEN 11 WHEN 2 THEN 21 ELSE 41 END
+        ) C ON U.Fecha = C.Fecha AND U.CodProducto = C.CodProducto AND U.CodGasolinera = C.CodGasolinera AND U.Turno = C.Turno
+        ORDER BY U.Fecha, ISNULL(V.Producto, t3.den), U.Turno
         """
         query_escaped = query.replace("'", "''")
         sql = f"SELECT * FROM OPENQUERY([{servidor}], '{query_escaped}')"
