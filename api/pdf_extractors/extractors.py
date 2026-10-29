@@ -700,6 +700,15 @@ def extract_with_profile_aemsa(doc: fitz.Document) -> Dict[str, Any]:
         if m:
             data["Destino"] = m.group(1).strip()
 
+    # El PDF trae dos "Permiso CRE:": el del emisor (H/19431/COM/2016, igual en
+    # todas las facturas) y el de la estación destino (PL/.../EXP/ES/AAAA). Solo el
+    # PL identifica la estación; exigir "PL/" descarta el del emisor. Si lo
+    # encuentra, Destino pasa a ser el permiso, igual que MCG y Premiergas, para que
+    # resolver_estacion.py lo cruce directo con Estaciones.PermisoCRE.
+    m = re.search(r'Permiso\s+CRE\s*:?\s*(PL/\d+/[A-Z]+/[A-Z]+/\d{4})', full_text, re.I)
+    if m:
+        data["Destino"] = m.group(1).strip().upper()
+
     # === REMISIÓN ===
     # El número de remisión es el BOL (bill of lading):
     #   formato nuevo: "BOL: 1471138 PD: 262417466000335"
@@ -744,7 +753,7 @@ def extract_with_profile_enerey(doc: fitz.Document) -> Dict[str, Any]:
         "ReceptorNombre": "", "ReceptorRfc": "", "FechaTimbrado": None, "UUID": "",
         "Destino": "",
         "Remision": ""
-    } 
+    }
 
     full_text = _strip_diacritics(" ".join([p.get_text() or "" for p in doc]))
 

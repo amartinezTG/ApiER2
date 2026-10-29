@@ -1067,7 +1067,7 @@ class DocumentosEstaciones:
                 cursor.execute(sql)
                 cols = [col[0] for col in cursor.description]
                 rows = cursor.fetchall()
-             
+
             return [dict(zip(cols, row)) for row in rows]
 
         except Exception as e:
@@ -1104,13 +1104,18 @@ class DocumentosEstaciones:
                 T.codprd,
                 M.codgas,
                 docs.documento,
-                docs.referencia
+                docs.referencia,
+                docs.uuid
             FROM [{short_db}].[dbo].[MovimientosTan] M
                 LEFT JOIN [{short_db}].[dbo].[Tanques] T ON M.codtan = T.cod AND M.codgas = T.codgas
                 OUTER APPLY (
                     SELECT
                         STRING_AGG(CONCAT('Compra ', M4.nrodoc), '; ') AS documento,
-                        STRING_AGG(ref.referencia_str, '; ') AS referencia
+                        STRING_AGG(ref.referencia_str, '; ') AS referencia,
+                        -- UUID del CFDI cargado en ControlGas (DocumentosC.satuid):
+                        -- vacío = el XML aún no se sube en ControlGas. Mismo orden
+                        -- de agregación que documento (una compra por renglón M4).
+                        STRING_AGG(NULLIF(LTRIM(RTRIM(DC.satuid)), ''), '; ') AS uuid
                     FROM [{short_db}].[dbo].[MovimientosTan] M4
                         LEFT JOIN [{short_db}].[dbo].[DocumentosC] DC ON M4.nrodoc = DC.nro AND M4.codgas = DC.codgas AND DC.tip = 1
                         CROSS APPLY (
